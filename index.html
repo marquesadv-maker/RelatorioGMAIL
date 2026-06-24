@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Gmail Monitor — Histórico</title>
+<style>
+:root{--bg:#f0f4f8;--surface:#fff;--navy:#0d2137;--gold:#c9a84c;--muted:#4b6280;--border:#cbd5e1}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--navy);font-family:'Segoe UI',system-ui,sans-serif;padding:2rem}
+h1{font-size:1.3rem;font-weight:800;margin-bottom:.2rem}
+.sub{color:var(--muted);font-size:.8rem;margin-bottom:1.5rem}
+.row{display:flex;align-items:center;gap:.65rem;background:var(--surface);border-radius:9px;
+      padding:.75rem 1rem;margin-bottom:.45rem;border:1px solid var(--border);
+      transition:.12s;flex-wrap:wrap}
+.row:hover{border-color:var(--gold);box-shadow:0 2px 8px rgba(201,168,76,.2)}
+.date{font-weight:700;font-size:.88rem;min-width:95px}
+.pill{font-size:.7rem;padding:.18rem .48rem;border-radius:6px;font-weight:700}
+.pill-alta{background:#fee2e2;color:#b91c1c}
+.pill-media{background:#fef3c7;color:#92400e}
+.pill-tribunal{background:#e0f2fe;color:#0369a1}
+.pill-semresp{background:#dbeafe;color:#1d4ed8}
+.gen{margin-left:auto;font-size:.72rem;color:var(--muted)}
+</style>
+</head>
+<body>
+<h1>⚖️ Gmail Monitor — Histórico</h1>
+<p class="sub">Clique em qualquer dia para abrir o dashboard atualizado</p>
+
+        <a href="dashboard.html" class="row">
+          <span class="date">24/06/2026</span>
+          <span class="pill pill-alta">🔴 40</span>
+          <span class="pill pill-media">🟡 23</span>
+          <span class="pill pill-tribunal">⚖️ 0</span>
+          <span class="pill pill-semresp">🔵 18</span>
+          <span class="gen">2026-06-24 08:00:33</span>
+        </a>
+        <a href="dashboard.html" class="row">
+          <span class="date">23/06/2026</span>
+          <span class="pill pill-alta">🔴 27</span>
+          <span class="pill pill-media">🟡 15</span>
+          <span class="pill pill-tribunal">⚖️ 0</span>
+          <span class="pill pill-semresp">🔵 22</span>
+          <span class="gen">2026-06-23 11:55:56</span>
+        </a>
+</body>
+</html>
