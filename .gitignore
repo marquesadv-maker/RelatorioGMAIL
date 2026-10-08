@@ -1,0 +1,8 @@
+# Credenciais e tokens OAuth — nunca versionar
+credentials.json
+token.json
+gestor_email/dados/
+
+# Python
+__pycache__/
+*.pyc
