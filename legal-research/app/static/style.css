@@ -70,3 +70,4 @@ mark{background:var(--mark);padding:0 2px;border-radius:2px}
 @keyframes sk{0%{background-position:200% 0}100%{background-position:-200% 0}}
 .tarefa{display:flex;justify-content:space-between;gap:10px;padding:6px 0;border-bottom:1px solid var(--line);font-size:13px}.tarefa .st{font-weight:600}.tarefa .st.erro{color:#991b1b}.tarefa .st.concluido{color:var(--ok)}
 .tarefa .barra-prog{background:#eee;width:160px;margin-top:6px}.tarefa .barra-prog div{background:var(--primary)}
+@media (max-width:900px){.topo{flex-wrap:wrap;gap:8px 12px}.topo nav{flex-basis:100%;flex-wrap:wrap}.barra{flex-wrap:wrap}.barra #q{flex-basis:100%;min-width:0}.modos{flex-direction:row;gap:10px}.resultado .cab{flex-wrap:wrap}.conteudo,.resultado,.cartao{min-width:0;overflow-wrap:anywhere}.grade{grid-template-columns:1fr}.tarefas-topo{min-width:0;flex-basis:100%}}
