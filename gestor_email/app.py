@@ -171,30 +171,35 @@ def create_app() -> Flask:
             where.append("EXISTS (SELECT 1 FROM message_labels x WHERE x.account=m.account "
                          "AND x.message_id=m.id AND x.label_id=?)")
             params.append(label)
+        categoria = request.args.get("categoria")
+        if categoria:
+            where.append(_category_sql(categoria))
         if q:
             for term in q.split():
                 like = f"%{term}%"
                 where.append("(m.subject LIKE ? OR m.from_raw LIKE ? OR m.to_raw LIKE ? OR m.snippet LIKE ?)")
                 params.extend([like] * 4)
 
-        sql = f"""
+        read = _read_sql("t.account", "t.thread_id")
+        base = f"""
             WITH matched AS (
                 SELECT m.account, m.thread_id, MAX(m.internal_date) AS last_date
                 FROM messages m WHERE {' AND '.join(where)}
                 GROUP BY m.account, m.thread_id
-            )
+            )"""
+        flt = f"WHERE NOT {read}" if unread_local else ""
+        total = db.one(f"{base} SELECT COUNT(*) AS n FROM matched t {flt}", params)["n"]
+        sql = f"""{base}
             SELECT t.account, t.thread_id, t.last_date,
                    (SELECT COUNT(*) FROM messages c WHERE c.account=t.account AND c.thread_id=t.thread_id) AS count,
-                   lr.read_at IS NOT NULL AS read_local
-            FROM matched t
-            LEFT JOIN local_read lr ON lr.account=t.account AND lr.thread_id=t.thread_id
-            {"WHERE lr.read_at IS NULL" if unread_local else ""}
+                   {read} AS read_local
+            FROM matched t {flt}
             ORDER BY t.last_date DESC LIMIT ? OFFSET ?
         """
-        result = []
-        for t in db.rows(sql, params + [limit, offset]):
-            result.append(_thread_summary(t))
-        return jsonify(result)
+        result = [_thread_summary(t) for t in db.rows(sql, params + [limit, offset])]
+        resp = jsonify(result)
+        resp.headers["X-Total-Count"] = str(total)
+        return resp
 
     @app.get("/api/threads/<account>/<thread_id>")
     def thread(account, thread_id):
@@ -215,6 +220,12 @@ def create_app() -> Flask:
         db.execute("INSERT OR IGNORE INTO local_read (account, thread_id) VALUES (?,?)", (account, thread_id))
         labels = sorted({l for m in msgs for l in m["label_ids"]})
         return jsonify({"account": account, "thread_id": thread_id, "messages": msgs, "label_ids": labels})
+
+    @app.post("/api/threads/<account>/<thread_id>/lida")
+    def mark_read_local(account, thread_id):
+        # Somente no MarquesPro; o Gmail não é alterado.
+        db.execute("INSERT OR IGNORE INTO local_read (account, thread_id) VALUES (?,?)", (account, thread_id))
+        return jsonify({"ok": True})
 
     @app.post("/api/threads/<account>/<thread_id>/nao-lida")
     def mark_unread_local(account, thread_id):
@@ -258,8 +269,9 @@ def create_app() -> Flask:
             t = db.one(
                 "SELECT account, thread_id, MAX(internal_date) AS last_date, COUNT(*) AS count "
                 "FROM messages WHERE account=? AND thread_id=? GROUP BY account, thread_id", (account, tid))
-            lr = db.one("SELECT 1 AS x FROM local_read WHERE account=? AND thread_id=?", (account, tid))
-            t["read_local"] = 1 if lr else 0
+            t["read_local"] = db.one(
+                f"SELECT {_read_sql('t.account', 't.thread_id')} AS r FROM (SELECT ? AS account, ? AS thread_id) t",
+                (account, tid))["r"]
             out.append(_thread_summary(t))
         return jsonify(out)
 
@@ -276,13 +288,24 @@ def create_app() -> Flask:
                 AND EXISTS (SELECT 1 FROM message_labels x WHERE x.account=m.account
                             AND x.message_id=m.id AND x.label_id='INBOX')""",
             [ms] + acc_params)["n"]
-        unread_local = db.one(
-            f"""SELECT COUNT(DISTINCT m.account || m.thread_id) AS n FROM messages m
-                LEFT JOIN local_read lr ON lr.account=m.account AND lr.thread_id=m.thread_id
-                WHERE lr.read_at IS NULL {acc_sql}
-                AND EXISTS (SELECT 1 FROM message_labels x WHERE x.account=m.account
-                            AND x.message_id=m.id AND x.label_id='INBOX')""",
-            acc_params)["n"]
+        def unread_threads(extra: str, extra_params=()) -> int:
+            return db.one(
+                f"""SELECT COUNT(*) AS n FROM (SELECT DISTINCT m.account, m.thread_id FROM messages m
+                    WHERE 1=1 {acc_sql} AND {extra}) t WHERE NOT {_read_sql('t.account', 't.thread_id')}""",
+                list(acc_params) + list(extra_params))["n"]
+
+        inbox_sql = ("EXISTS (SELECT 1 FROM message_labels x WHERE x.account=m.account "
+                     "AND x.message_id=m.id AND x.label_id='INBOX')")
+        unread_local = unread_threads(inbox_sql)
+        por_categoria = {c: unread_threads(f"{inbox_sql} AND {_category_sql(c)}")
+                         for c in ("principal", "promocoes", "social", "atualizacoes", "foruns")}
+        por_etiqueta = db.rows(
+            f"""SELECT name, COUNT(*) AS n FROM (
+                    SELECT DISTINCT m.account, m.thread_id, l.name FROM messages m
+                    JOIN message_labels x ON x.account=m.account AND x.message_id=m.id
+                    JOIN labels l ON l.account=x.account AND l.id=x.label_id AND l.type='user'
+                    WHERE 1=1 {acc_sql}) t
+                WHERE NOT {_read_sql('t.account', 't.thread_id')} GROUP BY name""", acc_params)
         by_label = db.rows(
             f"""SELECT x.label_id, l.name, COUNT(*) AS n FROM messages m
                 JOIN message_labels x ON x.account=m.account AND x.message_id=m.id
@@ -304,9 +327,8 @@ def create_app() -> Flask:
                                 AND x.message_id=m.id AND x.label_id IN ('SENT','SPAM','TRASH'))"""
         notif_hoje = db.one(f"SELECT COUNT(*) AS n {notif_where} AND m.internal_date>=?", acc_params + [ms])["n"]
         notif_pend = db.one(
-            f"""SELECT COUNT(DISTINCT m.account || m.thread_id) AS n {notif_where}
-                AND NOT EXISTS (SELECT 1 FROM local_read lr WHERE lr.account=m.account AND lr.thread_id=m.thread_id)""",
-            acc_params)["n"]
+            f"""SELECT COUNT(*) AS n FROM (SELECT DISTINCT m.account, m.thread_id {notif_where}) t
+                WHERE NOT {_read_sql('t.account', 't.thread_id')}""", acc_params)["n"]
         notif_tipos = db.rows(
             f"SELECT COALESCE(m.subtipo,'Outras') AS nome, COUNT(*) AS n {notif_where} AND m.internal_date>=? "
             "GROUP BY nome ORDER BY n DESC", acc_params + [ms])
@@ -315,6 +337,8 @@ def create_app() -> Flask:
             "recebidas_hoje": today,
             "notificacoes_hoje": notif_today,
             "nao_lidas_local": unread_local,
+            "nao_lidas_categoria": por_categoria,
+            "nao_lidas_etiqueta": {r["name"]: r["n"] for r in por_etiqueta},
             "hoje_por_etiqueta": by_label,
             "novas": new,
             "ultimo_id": last,
@@ -463,6 +487,21 @@ def create_app() -> Flask:
             "label_ids": gmail_ops.protected_filter(m["label_ids"]),
         })
 
+    # ─── Preferências ─────────────────────────────────────────────────────
+
+    @app.get("/api/settings")
+    def settings_get():
+        return jsonify(db.all_settings())
+
+    @app.post("/api/settings")
+    def settings_set():
+        for k, v in (request.json or {}).items():
+            try:
+                db.set_setting(k, "1" if v in (True, "1", 1) else "0")
+            except ValueError:
+                return jsonify({"erro": f"Preferência desconhecida: {k}"}), 400
+        return jsonify(db.all_settings())
+
     # ─── Regras de etiquetas automáticas ──────────────────────────────────
 
     @app.get("/api/rules")
@@ -526,9 +565,38 @@ def _require_account(acc) -> str:
     return acc
 
 
+CATEGORY_LABELS = {"promocoes": "CATEGORY_PROMOTIONS", "social": "CATEGORY_SOCIAL",
+                   "atualizacoes": "CATEGORY_UPDATES", "foruns": "CATEGORY_FORUMS"}
+
+
+def _category_sql(categoria: str) -> str:
+    """Abas da caixa de entrada como no Gmail (Principal, Promoções, Social...)."""
+    if categoria in CATEGORY_LABELS:
+        return ("EXISTS (SELECT 1 FROM message_labels xc WHERE xc.account=m.account AND xc.message_id=m.id "
+                f"AND xc.label_id='{CATEGORY_LABELS[categoria]}')")
+    others = ",".join(f"'{v}'" for v in CATEGORY_LABELS.values())
+    return ("NOT EXISTS (SELECT 1 FROM message_labels xc WHERE xc.account=m.account AND xc.message_id=m.id "
+            f"AND xc.label_id IN ({others}))")
+
+
+def _read_sql(acc: str, tid: str) -> str:
+    """Expressão SQL: a conversa conta como lida no MarquesPro?
+
+    Lida = aberta no MarquesPro; ou, se a preferência estiver ativa,
+    nenhuma mensagem da conversa está marcada como não lida no Gmail.
+    """
+    gmail_conta = 1 if db.get_setting("lida_no_gmail_conta_como_lida") == "1" else 0
+    local = f"EXISTS (SELECT 1 FROM local_read lr WHERE lr.account={acc} AND lr.thread_id={tid})"
+    if not gmail_conta:
+        return f"({local})"
+    gm = ("NOT EXISTS (SELECT 1 FROM messages mu JOIN message_labels xu ON xu.account=mu.account "
+          f"AND xu.message_id=mu.id AND xu.label_id='UNREAD' WHERE mu.account={acc} AND mu.thread_id={tid})")
+    return f"({local} OR {gm})"
+
+
 def _thread_summary(t: Dict[str, Any]) -> Dict[str, Any]:
     msgs = db.rows(
-        "SELECT id, from_name, from_email, subject, snippet, label_ids, internal_date, has_attachments, tipo, subtipo "
+        "SELECT id, from_name, from_email, subject, snippet, label_ids, internal_date, has_attachments, tipo, subtipo, body_json "
         "FROM messages WHERE account=? AND thread_id=? ORDER BY internal_date",
         (t["account"], t["thread_id"]))
     last = msgs[-1]
@@ -554,4 +622,17 @@ def _thread_summary(t: Dict[str, Any]) -> Dict[str, Any]:
         "has_attachments": any(m["has_attachments"] for m in msgs),
         "last_message_id": last["id"],
         "notificacao": next((m["subtipo"] or "Outras" for m in msgs if m["tipo"] == "TRIBUNAL"), None),
+        "important": "IMPORTANT" in labels,
+        "anexos": _attachment_names(msgs),
     }
+
+
+def _attachment_names(msgs: List[Dict[str, Any]]) -> List[str]:
+    """Nomes de anexos já conhecidos (corpo em cache), para os chips sob a linha, como no Gmail."""
+    names: List[str] = []
+    for m in msgs:
+        if m.get("body_json"):
+            for a in json.loads(m["body_json"]).get("attachments", []):
+                if a.get("filename") and a["filename"] not in names:
+                    names.append(a["filename"])
+    return names[:3]

@@ -102,6 +102,11 @@ CREATE TABLE IF NOT EXISTS rule_applied (
     PRIMARY KEY (rule_id, account, message_id)
 );
 
+CREATE TABLE IF NOT EXISTS settings (
+    key   TEXT PRIMARY KEY,
+    value TEXT
+);
+
 CREATE TABLE IF NOT EXISTS notifications (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     account    TEXT NOT NULL,
@@ -265,3 +270,28 @@ def backfill_tipos() -> int:
             c.execute("UPDATE messages SET tipo=?, subtipo=? WHERE account=? AND id=?",
                       (*classify.classify(r["from_raw"], r["subject"], r["snippet"]), r["account"], r["id"]))
     return len(pend)
+
+
+# ─── Preferências ─────────────────────────────────────────────────────────────
+
+DEFAULT_SETTINGS = {
+    # Quando "1", conversa lida no Gmail também aparece como lida no MarquesPro.
+    # O inverso nunca acontece: abrir no MarquesPro não altera o Gmail.
+    "lida_no_gmail_conta_como_lida": "0",
+}
+
+
+def get_setting(key: str) -> str:
+    r = one("SELECT value FROM settings WHERE key=?", (key,))
+    return r["value"] if r else DEFAULT_SETTINGS.get(key, "")
+
+
+def set_setting(key: str, value: str):
+    if key not in DEFAULT_SETTINGS:
+        raise ValueError("Preferência desconhecida")
+    execute("INSERT INTO settings (key, value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (key, value))
+
+
+def all_settings() -> Dict[str, str]:
+    return {k: get_setting(k) for k in DEFAULT_SETTINGS}

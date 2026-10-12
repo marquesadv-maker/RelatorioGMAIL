@@ -195,6 +195,27 @@ class GestorTest(unittest.TestCase):
         self.assertEqual(self.get("/api/status")["notificacoes"]["pendentes"], 1)
         self.assertEqual(self.g.modify_calls, [])
 
+    def test_lida_no_gmail_conta_como_lida_opcional(self):
+        mid = self.g.add_message("Cliente <cliente@ex.com>", "Oi", labels=("INBOX", "UNREAD", "CATEGORY_PERSONAL"))
+        self.g.add_message("Loja <promo@loja.com>", "Oferta", labels=("INBOX", "UNREAD", "CATEGORY_PROMOTIONS"))
+        sync.sync_account(ME)
+        # Lida no Gmail (outra pessoa abriu lá)
+        self.g.msg_store[mid]["labelIds"].remove("UNREAD")
+        self.g.history_id += 1
+        self.g.hist_store.append({"id": str(self.g.history_id),
+                                  "labelsRemoved": [{"message": {"id": mid}, "labelIds": ["UNREAD"]}]})
+        sync.sync_account(ME)
+        principal = self.get("/api/threads?label=INBOX&categoria=principal")
+        self.assertEqual([t["subject"] for t in principal], ["Oi"])
+        self.assertFalse(principal[0]["read_local"])          # padrão: leituras independentes
+        self.assertEqual(self.get("/api/status")["nao_lidas_categoria"]["promocoes"], 1)
+        self.post("/api/settings", json={"lida_no_gmail_conta_como_lida": True})
+        self.assertTrue(self.get("/api/threads?label=INBOX&categoria=principal")[0]["read_local"])
+        self.assertEqual(self.get("/api/status")["nao_lidas_categoria"]["principal"], 0)
+        r = self.client.get("/api/threads?label=INBOX&limit=1", headers=self.h)
+        self.assertEqual(r.headers["X-Total-Count"], "2")
+        self.assertEqual(self.g.modify_calls, [])            # nunca altera o Gmail
+
     def test_anexo_svg_nunca_inline(self):
         mid = self.g.add_message("X <x@ex.com>", "Img")
         r = self.client.get(f"/api/attachment/{ME}/{mid}/a1?inline=1&tipo=image/svg%2Bxml&nome=a.svg", headers=self.h)

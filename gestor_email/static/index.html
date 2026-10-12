@@ -4,100 +4,114 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>MarquesPro Mail</title>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..24,400,0..1,0&display=block">
 <link rel="stylesheet" href="/static/style.css">
 <script>window.GESTOR_TOKEN = "__TOKEN__";</script>
 </head>
 <body>
 <header class="topbar">
-  <button class="icon-btn" id="btn-menu" title="Menu">☰</button>
-  <div class="brand"><img src="/static/logo-m-dourado.png" alt="Marques Advogados"><span>MarquesPro <b>Mail</b></span></div>
-  <form class="search" id="search-form">
-    <span class="search-ic">🔍</span>
-    <input id="search-input" type="search" placeholder="Pesquisar e-mail (aceita operadores do Gmail: from:, has:attachment, label:...)">
-    <label class="search-mode" title="Buscar diretamente no Gmail, inclusive mensagens antigas"><input type="checkbox" id="search-gmail"> no Gmail</label>
+  <button class="icon-btn" id="btn-menu" title="Menu principal"><span class="ms">menu</span></button>
+  <a class="brand" href="#" id="brand" title="Caixa de entrada"><img src="/static/logo-m-dourado.png" alt="Marques Advogados"><span>MarquesPro <b>Mail</b></span></a>
+  <form class="search" id="search-form" role="search">
+    <button class="icon-btn" type="submit" title="Pesquisar"><span class="ms">search</span></button>
+    <input id="search-input" type="search" placeholder="Pesquisar e-mail" autocomplete="off">
+    <label class="search-mode" title="Buscar diretamente no Gmail, inclusive mensagens antigas (aceita from:, has:attachment, label:...)"><input type="checkbox" id="search-gmail"> no Gmail</label>
+    <button class="icon-btn" type="button" id="btn-clear-search" title="Limpar pesquisa"><span class="ms">close</span></button>
   </form>
-  <button class="counter counter-notif" id="counter-notif" title="Notificações judiciais (intimações, citações, publicações) recebidas hoje">
-    <span class="counter-ic">⚖️</span><span id="notif-num">0</span><span class="counter-lbl">notificações hoje</span>
-  </button>
-  <button class="counter" id="counter" title="Total de e-mails recebidos hoje na caixa de entrada">
-    <span class="counter-ic">🔔</span><span id="counter-num">0</span><span class="counter-lbl">e-mails hoje</span>
-  </button>
-  <select id="account-select" title="Conta"></select>
-  <button class="icon-btn" id="btn-sync" title="Sincronizar agora">⟳</button>
-  <button class="icon-btn" id="btn-settings" title="Configurações">⚙</button>
+  <div class="top-right">
+    <button class="pill-count notif" id="counter-notif" title="Notificações judiciais recebidas hoje (intimações, citações, publicações)">
+      <span class="ms">gavel</span><b id="notif-num">0</b><span class="lbl">notificações hoje</span>
+    </button>
+    <button class="pill-count" id="counter" title="E-mails recebidos hoje na caixa de entrada">
+      <span class="ms">notifications</span><b id="counter-num">0</b><span class="lbl">hoje</span>
+    </button>
+    <button class="icon-btn" id="btn-sync" title="Sincronizar agora"><span class="ms">sync</span></button>
+    <button class="icon-btn" id="btn-settings" title="Configurações"><span class="ms">settings</span></button>
+    <div class="dropdown">
+      <button class="avatar-btn" id="btn-account" title="Conta"><span id="account-initial">?</span></button>
+      <div class="menu account-menu hidden" id="account-menu"></div>
+    </div>
+  </div>
 </header>
 
-<div class="counter-pop hidden" id="counter-pop"></div>
+<div class="pop counter-pop hidden" id="counter-pop"></div>
 
 <div class="layout">
   <nav class="sidebar" id="sidebar">
-    <button class="compose-btn" id="btn-compose">✏️ Escrever</button>
+    <button class="compose-btn" id="btn-compose"><span class="ms">edit</span><span class="name">Escrever</span></button>
     <ul class="folders" id="folders"></ul>
-    <div class="labels-head">
-      <span>Etiquetas</span>
-      <button class="icon-btn small" id="btn-new-label" title="Nova etiqueta">+</button>
+    <div class="labels-head"><span class="name">Marcadores</span>
+      <button class="icon-btn small" id="btn-new-label" title="Criar novo marcador"><span class="ms">add</span></button>
     </div>
     <ul class="folders" id="label-list"></ul>
   </nav>
 
   <main class="main">
     <div class="toolbar" id="list-toolbar">
-      <input type="checkbox" id="select-all" title="Selecionar todas">
-      <button class="icon-btn" id="btn-refresh" title="Atualizar">⟳</button>
-      <div class="dropdown">
-        <button class="tool-btn" id="btn-bulk-labels" title="Etiquetas">🏷️ Etiquetas ▾</button>
+      <label class="chk" title="Selecionar"><input type="checkbox" id="select-all"></label>
+      <button class="icon-btn" id="btn-refresh" title="Atualizar"><span class="ms">refresh</span></button>
+      <div class="dropdown sel-tools hidden">
+        <button class="icon-btn" id="btn-bulk-labels" title="Marcadores"><span class="ms">label</span></button>
         <div class="menu hidden" id="bulk-label-menu"></div>
       </div>
-      <button class="tool-btn" id="btn-bulk-unread" title="Marcar como não lida apenas no MarquesPro">✉ Não lida (local)</button>
-      <label class="filter-unread"><input type="checkbox" id="only-unread"> Só não lidas (local)</label>
+      <button class="icon-btn sel-tools hidden" id="btn-bulk-unread" title="Marcar como não lida (somente no MarquesPro)"><span class="ms">mark_email_unread</span></button>
+      <label class="filter-unread" title="Mostrar apenas conversas não lidas no MarquesPro"><input type="checkbox" id="only-unread"> Não lidas</label>
       <span class="spacer"></span>
-      <span class="hint" title="Abrir mensagens aqui não altera o status de leitura no Gmail">👁️ Leitura local — não altera o Gmail</span>
+      <span class="pager" id="pager"></span>
+      <button class="icon-btn" id="btn-prev" title="Mais recentes"><span class="ms">chevron_left</span></button>
+      <button class="icon-btn" id="btn-next" title="Mais antigas"><span class="ms">chevron_right</span></button>
     </div>
+    <div class="tabs-inbox" id="tabs-inbox"></div>
     <div id="thread-list" class="thread-list"></div>
     <div id="thread-view" class="thread-view hidden"></div>
   </main>
 </div>
 
-<!-- Janela de composição -->
+<!-- Nova mensagem -->
 <div class="compose hidden" id="compose">
-  <div class="compose-head">
+  <div class="compose-head" id="compose-head">
     <span id="compose-title">Nova mensagem</span>
-    <span>
-      <button class="icon-btn small" id="compose-min" title="Minimizar">_</button>
-      <button class="icon-btn small" id="compose-close" title="Fechar">✕</button>
+    <span class="compose-head-btns">
+      <button class="icon-btn tiny" id="compose-min" title="Minimizar"><span class="ms">minimize</span></button>
+      <button class="icon-btn tiny" id="compose-max" title="Tela cheia"><span class="ms">open_in_full</span></button>
+      <button class="icon-btn tiny" id="compose-close" title="Fechar"><span class="ms">close</span></button>
     </span>
   </div>
   <div class="compose-body">
-    <div class="field"><label>De</label><select id="c-from"></select></div>
-    <div class="field ac-wrap"><label>Para</label><input id="c-to" autocomplete="off">
-      <button class="link-btn" id="c-show-cc">Cc/Cco</button><div class="ac hidden"></div></div>
-    <div class="field ac-wrap hidden" id="c-cc-row"><label>Cc</label><input id="c-cc" autocomplete="off"><div class="ac hidden"></div></div>
-    <div class="field ac-wrap hidden" id="c-bcc-row"><label>Cco</label><input id="c-bcc" autocomplete="off"><div class="ac hidden"></div></div>
-    <div class="field"><label>Assunto</label><input id="c-subject"></div>
-    <div class="editor-tools">
-      <button data-cmd="bold" title="Negrito"><b>N</b></button>
-      <button data-cmd="italic" title="Itálico"><i>I</i></button>
-      <button data-cmd="underline" title="Sublinhado"><u>S</u></button>
-      <button data-cmd="insertUnorderedList" title="Lista">•</button>
-      <button data-cmd="insertOrderedList" title="Lista numerada">1.</button>
-      <button data-cmd="createLink" title="Link">🔗</button>
-      <button data-cmd="removeFormat" title="Limpar formatação">⨯</button>
-    </div>
-    <div class="editor" id="c-editor" contenteditable="true"></div>
+    <div class="field"><label for="c-from">De</label><select id="c-from"></select></div>
+    <div class="field ac-wrap"><label for="c-to">Para</label><input id="c-to" autocomplete="off">
+      <button class="link-btn" id="c-show-cc" type="button">Cc Cco</button><div class="ac hidden"></div></div>
+    <div class="field ac-wrap hidden" id="c-cc-row"><label for="c-cc">Cc</label><input id="c-cc" autocomplete="off"><div class="ac hidden"></div></div>
+    <div class="field ac-wrap hidden" id="c-bcc-row"><label for="c-bcc">Cco</label><input id="c-bcc" autocomplete="off"><div class="ac hidden"></div></div>
+    <div class="field"><input id="c-subject" placeholder="Assunto" aria-label="Assunto"></div>
+    <div class="editor" id="c-editor" contenteditable="true" aria-label="Corpo da mensagem"></div>
     <div class="compose-extra">
-      <div id="c-fwd-att" class="hidden"><label><input type="checkbox" id="c-fwd-att-chk" checked> Incluir anexos originais <span id="c-fwd-att-list"></span></label></div>
-      <div id="c-files"></div>
-      <div class="c-labels"><span>Etiquetas ao enviar:</span> <span id="c-label-chips"></span>
-        <div class="dropdown inline"><button class="link-btn" id="c-add-label">+ etiqueta</button><div class="menu hidden" id="c-label-menu"></div></div>
-      </div>
+      <div id="c-fwd-att" class="hidden"><label><input type="checkbox" id="c-fwd-att-chk" checked> Incluir anexos originais: <span id="c-fwd-att-list"></span></label></div>
+      <div id="c-files" class="att-chips"></div>
+      <div class="c-labels" id="c-labels-row"><span class="ms sm">label</span> <span id="c-label-chips"></span></div>
     </div>
+  </div>
+  <div class="editor-tools hidden" id="editor-tools">
+    <button data-cmd="undo" title="Desfazer"><span class="ms">undo</span></button>
+    <button data-cmd="redo" title="Refazer"><span class="ms">redo</span></button>
+    <span class="sep"></span>
+    <button data-cmd="bold" title="Negrito"><span class="ms">format_bold</span></button>
+    <button data-cmd="italic" title="Itálico"><span class="ms">format_italic</span></button>
+    <button data-cmd="underline" title="Sublinhado"><span class="ms">format_underlined</span></button>
+    <span class="sep"></span>
+    <button data-cmd="insertOrderedList" title="Lista numerada"><span class="ms">format_list_numbered</span></button>
+    <button data-cmd="insertUnorderedList" title="Lista com marcadores"><span class="ms">format_list_bulleted</span></button>
+    <button data-cmd="removeFormat" title="Remover formatação"><span class="ms">format_clear</span></button>
   </div>
   <div class="compose-foot">
     <button class="send-btn" id="c-send">Enviar</button>
-    <label class="icon-btn" title="Anexar arquivos">📎<input type="file" id="c-attach" multiple hidden></label>
+    <button class="icon-btn" id="c-format" title="Opções de formatação"><span class="ms">format_color_text</span></button>
+    <label class="icon-btn" title="Anexar arquivos"><span class="ms">attach_file</span><input type="file" id="c-attach" multiple hidden></label>
+    <button class="icon-btn" id="c-link" title="Inserir link"><span class="ms">link</span></button>
+    <div class="dropdown up"><button class="icon-btn" id="c-add-label" title="Marcadores ao enviar"><span class="ms">label</span></button><div class="menu hidden" id="c-label-menu"></div></div>
     <span class="spacer"></span>
     <span class="hint" id="c-status"></span>
+    <button class="icon-btn" id="c-discard" title="Descartar rascunho"><span class="ms">delete</span></button>
   </div>
 </div>
 
@@ -105,39 +119,51 @@
 <div class="modal-bg hidden" id="settings">
   <div class="modal">
     <div class="modal-head">
-      <div class="tabs">
-        <button class="tab active" data-tab="tab-accounts">Contas</button>
-        <button class="tab" data-tab="tab-signatures">Remetentes e assinaturas</button>
-        <button class="tab" data-tab="tab-rules">Etiquetas automáticas</button>
-      </div>
-      <button class="icon-btn" id="settings-close">✕</button>
+      <h2>Configurações</h2>
+      <button class="icon-btn" id="settings-close" title="Fechar"><span class="ms">close</span></button>
+    </div>
+    <div class="tabs">
+      <button class="tab active" data-tab="tab-general">Geral</button>
+      <button class="tab" data-tab="tab-accounts">Contas</button>
+      <button class="tab" data-tab="tab-signatures">Remetentes e assinaturas</button>
+      <button class="tab" data-tab="tab-rules">Filtros</button>
     </div>
     <div class="modal-body">
-      <section id="tab-accounts" class="tab-pane">
+      <section id="tab-general" class="tab-pane">
+        <div class="setting">
+          <div class="setting-name">Leitura</div>
+          <div>
+            <label class="radio"><input type="radio" name="leitura" value="0" id="leitura-0"> <span><b>Independente</b> (padrão): a conversa só aparece como lida aqui depois de aberta no MarquesPro, mesmo que já tenha sido lida no Gmail.</span></label>
+            <label class="radio"><input type="radio" name="leitura" value="1" id="leitura-1"> <span><b>Acompanhar o Gmail</b>: o que for lido no Gmail também aparece como lido aqui.</span></label>
+            <p class="muted">Nas duas opções, abrir uma mensagem no MarquesPro <b>nunca</b> a marca como lida no Gmail. A leitura pela controladoria fica preservada.</p>
+          </div>
+        </div>
+      </section>
+      <section id="tab-accounts" class="tab-pane hidden">
         <p class="muted">Cada usuário conecta a própria conta Google (ex.: mariaelisa@marquesss.com.br). O navegador abrirá a tela de autorização do Google.</p>
-        <div class="row"><input id="acc-hint" placeholder="e-mail a conectar (opcional)"><button class="btn primary" id="acc-connect">Conectar conta</button></div>
+        <div class="row"><input id="acc-hint" placeholder="E-mail a conectar (opcional)"><button class="btn primary" id="acc-connect">Conectar conta</button></div>
         <div id="acc-list"></div>
       </section>
       <section id="tab-signatures" class="tab-pane hidden">
-        <p class="muted">Remetentes e assinaturas lidos do Gmail (Configurações → Geral → Assinatura e "Enviar e-mail como"). O nome do remetente é preenchido automaticamente ao escrever. Se preferir, defina uma assinatura local.</p>
+        <p class="muted">Lidos do Gmail (Configurações → Geral → Assinatura e "Enviar e-mail como"). O nome do remetente é preenchido automaticamente ao escrever.</p>
         <button class="btn" id="sig-refresh">Atualizar do Gmail</button>
         <div id="sig-list"></div>
       </section>
       <section id="tab-rules" class="tab-pane hidden">
-        <p class="muted">Inclui etiquetas automaticamente no Gmail. As regras apenas <b>adicionam</b> etiquetas: nunca marcam como lida nem retiram da caixa de entrada.</p>
+        <p class="muted">Aplica marcadores automaticamente no Gmail. Os filtros apenas <b>adicionam</b> marcadores: nunca marcam como lida nem retiram da caixa de entrada.</p>
         <div class="rule-form">
-          <select id="r-account"></select>
-          <select id="r-direction">
+          <select id="r-account" aria-label="Conta"></select>
+          <select id="r-direction" aria-label="Quando">
             <option value="recebido">Recebido de</option>
             <option value="enviado">Enviado por</option>
           </select>
-          <input id="r-pattern" placeholder="nome ou e-mail (ex.: mariaelisa@marquesss.com.br, @trt2.jus.br)">
-          <div class="dropdown inline"><button class="btn" id="r-labels-btn">Etiquetas ▾</button><div class="menu hidden" id="r-label-menu"></div></div>
+          <input id="r-pattern" placeholder="nome ou e-mail (ex.: mariaelisa@marquesss.com.br, @trt2.jus.br)" aria-label="Contém">
+          <div class="dropdown"><button class="btn" id="r-labels-btn">Marcadores ▾</button><div class="menu hidden" id="r-label-menu"></div></div>
           <label><input type="checkbox" id="r-existing"> aplicar às já sincronizadas</label>
-          <button class="btn primary" id="r-save">Adicionar regra</button>
+          <button class="btn primary" id="r-save">Criar filtro</button>
         </div>
         <div id="r-chips" class="chips"></div>
-        <table class="rules"><thead><tr><th>Conta</th><th>Quando</th><th>Contém</th><th>Etiquetas</th><th>Ativa</th><th></th></tr></thead><tbody id="rule-list"></tbody></table>
+        <table class="rules"><thead><tr><th>Conta</th><th>Quando</th><th>Contém</th><th>Marcadores</th><th>Ativo</th><th></th></tr></thead><tbody id="rule-list"></tbody></table>
       </section>
     </div>
   </div>
