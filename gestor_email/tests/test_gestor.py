@@ -216,6 +216,24 @@ class GestorTest(unittest.TestCase):
         self.assertEqual(r.headers["X-Total-Count"], "2")
         self.assertEqual(self.g.modify_calls, [])            # nunca altera o Gmail
 
+    def test_destaques_de_notificacoes(self):
+        self.g.add_message("PJe <pje@trt2.jus.br>", "Intimação - Processo 1")
+        self.g.add_message("PJe <pje@trt2.jus.br>", "Citação eletrônica - Processo 2")
+        self.g.add_message("DJE <dje@tjsp.jus.br>", "Publicação no Diário Oficial")
+        self.g.add_message("Cliente <cliente@ex.com>", "Oi")
+        sync.sync_account(ME)
+        hl = self.get("/api/threads?label=INBOX&destaque=1")
+        resto = self.get("/api/threads?label=INBOX&destaque=0")
+        self.assertEqual(len(hl), 3)
+        self.assertEqual([t["subject"] for t in resto], ["Oi"])
+        g = self.get("/api/status")["notificacoes"]["pendentes_por_grupo"]
+        self.assertEqual(g, {"intimacoes": 1, "citacoes": 1, "notificacoes": 1})
+        self.assertEqual(len(self.get("/api/threads?label=ALL&grupo=citacoes")), 1)
+        # Aberta: sai dos destaques e volta para a lista normal
+        self.get(f"/api/threads/{ME}/{hl[0]['thread_id']}")
+        self.assertEqual(len(self.get("/api/threads?label=INBOX&destaque=1")), 2)
+        self.assertEqual(len(self.get("/api/threads?label=INBOX&destaque=0")), 2)
+
     def test_anexo_svg_nunca_inline(self):
         mid = self.g.add_message("X <x@ex.com>", "Img")
         r = self.client.get(f"/api/attachment/{ME}/{mid}/a1?inline=1&tipo=image/svg%2Bxml&nome=a.svg", headers=self.h)

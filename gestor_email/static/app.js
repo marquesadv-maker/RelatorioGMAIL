@@ -19,15 +19,16 @@ const FOLDERS = [
   {id: "SENT", name: "Enviados", icon: "send"},
   {id: "ALL", name: "Todos os e-mails", icon: "mail"},
 ];
-const TABS = [
-  {cat: "principal", name: "Principal", icon: "inbox"},
-  {cat: "promocoes", name: "Promoções", icon: "sell"},
-  {cat: "social", name: "Social", icon: "group"},
-  {cat: "atualizacoes", name: "Atualizações", icon: "info"},
+// Filtros rápidos de destaque (no lugar das abas Promoções/Social/Atualizações)
+const GRUPOS = [
+  {id: "", name: "Todas", icon: "inbox"},
+  {id: "intimacoes", name: "Intimações", icon: "gavel"},
+  {id: "citacoes", name: "Citações", icon: "assignment_ind"},
+  {id: "notificacoes", name: "Notificações", icon: "campaign"},
 ];
 
 const state = {
-  accounts: [], account: "", folder: {id: "INBOX", cat: "principal"}, offset: 0, total: 0,
+  accounts: [], account: "", folder: {id: "INBOX"}, grupo: "", offset: 0, total: 0, hlCount: 0,
   labels: [], threads: [], selected: new Set(), sendAs: [], settings: {},
   lastNotif: null, notifHoje: null, status: null, search: "", searchGmail: false, current: null,
 };
@@ -129,7 +130,7 @@ function renderAccountMenu() {
   $$(".acc", m).forEach(d => d.onclick = guard(async () => {
     m.classList.add("hidden");
     state.account = d.dataset.acc; state.lastNotif = null; state.notifHoje = null; state.offset = 0;
-    if (state.folder.name) state.folder = {id: "INBOX", cat: "principal"};
+    if (state.folder.name) state.folder = {id: "INBOX"};
     renderAccountButton(); renderSidebar(); await refreshStatus(); await loadThreads();
   }));
   $("[data-add]", m).onclick = () => { m.classList.add("hidden"); openSettings("tab-accounts"); };
@@ -162,21 +163,22 @@ function renderSidebar() {
 }
 
 function renderTabs() {
-  const show = state.folder.id === "INBOX" && !state.folder.name && !state.search;
+  const show = ["INBOX", "NOTIF"].includes(state.folder.id) && !state.folder.name && !state.search;
   const box = $("#tabs-inbox");
   box.classList.toggle("hidden", !show);
   if (!show) return;
-  const un = (state.status && state.status.nao_lidas_categoria) || {};
-  box.innerHTML = TABS.map(t => `<button data-cat="${t.cat}" class="${state.folder.cat === t.cat ? "on" : ""}">
-    ${ic(t.icon)}<span class="tname">${t.name}</span>${t.cat !== "principal" && un[t.cat] ? `<span class="new">${un[t.cat]} nova${un[t.cat] > 1 ? "s" : ""}</span>` : ""}</button>`).join("");
-  $$("button", box).forEach(b => b.onclick = guard(async () => { state.folder = {id: "INBOX", cat: b.dataset.cat}; state.offset = 0; await loadThreads(); }));
+  const pend = (state.status && state.status.notificacoes && state.status.notificacoes.pendentes_por_grupo) || {};
+  box.innerHTML = GRUPOS.map(g => `<button class="filter-chip ${state.grupo === g.id ? "on" : ""} ${g.id ? "hl" : ""}" data-grupo="${g.id}"
+      title="${g.id ? `${g.name} ainda não abertas no MarquesPro: ${pend[g.id] || 0}` : "Mostrar todas as conversas"}">
+    ${ic(state.grupo === g.id ? "check" : g.icon, "sm")}<span>${g.name}</span>${g.id && pend[g.id] ? `<b class="n">${pend[g.id]}</b>` : ""}</button>`).join("");
+  $$("button", box).forEach(b => b.onclick = guard(async () => { state.grupo = b.dataset.grupo; state.offset = 0; await loadThreads(); }));
 }
 
 async function loadThreads() {
   const list = $("#thread-list");
   showList();
   renderTabs();
-  let data, total;
+  let data, total, highlights = [];
   if (state.search && state.searchGmail) {
     if (!state.account) { list.innerHTML = `<div class="empty">${ic("person_search")}Escolha uma conta (no círculo do canto superior direito) para buscar no Gmail.</div>`; return; }
     data = await api(`/api/search?${qs({account: state.account, q: state.search})}`);
@@ -185,18 +187,26 @@ async function loadThreads() {
     const p = {account: state.account, q: state.search, nao_lidas: $("#only-unread").checked ? 1 : "", limit: PAGE, offset: state.offset};
     if (state.folder.name) { if (state.account) p.label = state.folder.id; else p.label_nome = state.folder.name; }
     else if (state.folder.id === "NOTIF") { p.label = "ALL"; p.tipo = "TRIBUNAL"; }
-    else { p.label = state.folder.id; if (state.folder.id === "INBOX" && !state.search) p.categoria = state.folder.cat || "principal"; }
+    else p.label = state.folder.id;
+    if (state.grupo && ["INBOX", "NOTIF"].includes(state.folder.id) && !state.folder.name) p.grupo = state.grupo;
+    // Caixa de entrada: destaques (notificações não abertas) no topo, como a "Prioritária" do Gmail
+    const withHl = state.folder.id === "INBOX" && !state.folder.name && !state.search && !state.grupo && !p.nao_lidas;
+    if (withHl) {
+      if (state.offset === 0) highlights = await api(`/api/threads?${qs(Object.assign({}, p, {destaque: 1, limit: 100, offset: 0}))}`);
+      p.destaque = 0;
+    }
     const r = await apiRaw(`/api/threads?${qs(p)}`);
     data = r.data; total = +(r.headers.get("X-Total-Count") || data.length);
   }
-  state.threads = data; state.total = total;
+  state.hlCount = highlights.length;
+  state.threads = highlights.concat(data); state.total = total;
   state.selected.clear();
   $("#select-all").checked = false;
   renderThreads();
 }
 
 function renderPager() {
-  const n = state.threads.length;
+  const n = state.threads.length - state.hlCount;
   $("#pager").textContent = n ? `${state.offset + 1}–${state.offset + n} de ${state.total.toLocaleString("pt-BR")}` : "";
   $("#btn-prev").disabled = state.offset === 0;
   $("#btn-next").disabled = state.offset + n >= state.total;
@@ -213,12 +223,20 @@ function renderThreads() {
     list.innerHTML = `<div class="empty">${ic(state.folder.id === "NOTIF" ? "gavel" : "inbox")}${msg}</div>`; return;
   }
   const multi = !state.account && state.accounts.length > 1;
-  list.innerHTML = state.threads.map((t, i) => {
+  const secHl = `<div class="sec-head hl">${ic("priority_high", "sm")}Destaques <span class="muted">· intimações, citações e notificações ainda não abertas</span><b class="n">${state.hlCount}</b></div>`;
+  const secRest = `<div class="sec-head">${ic("inbox", "sm")}Todo o restante</div>`;
+  list.innerHTML = state.threads.map((t, i) => (state.hlCount && i === 0 ? secHl : "") + (state.hlCount && i === state.hlCount ? secRest : "") + rowHtml(t, i, multi)).join("")
+    + (state.hlCount && state.threads.length === state.hlCount ? secRest + `<div class="empty">Nenhuma outra conversa nesta página.</div>` : "");
+}
+
+function rowHtml(t, i, multi) {
+  {
     const chips = t.label_ids.map(id => labelById(t.account, id)).filter(l => l && l.type === "user")
       .filter(l => !(state.folder.name && l.name === state.folder.name)).map(l => chipHtml(l)).join("");
     const atts = (t.anexos || []).map(n => `<span class="att-chip">${ic("description", "sm")}${esc(n)}</span>`).join("");
     const starred = t.label_ids.includes("STARRED");
-    return `<div class="row-t ${t.read_local ? "" : "unread"} ${state.selected.has(i) ? "selected" : ""}" data-i="${i}">
+    const hl = t.notificacao && !t.read_local;
+    return `<div class="row-t ${t.read_local ? "" : "unread"} ${hl ? "hl" : ""} ${state.selected.has(i) ? "selected" : ""}" data-i="${i}">
       <div class="lead">
         <span class="cell"><input type="checkbox" class="sel" ${state.selected.has(i) ? "checked" : ""} aria-label="Selecionar"></span>
         <button class="star ${starred ? "on" : ""}" title="${starred ? "Com estrela" : "Sem estrela"}">${ic("star", starred ? "fill" : "")}</button>
@@ -237,7 +255,7 @@ function renderThreads() {
       <div class="hover-acts">
         <button class="icon-btn small" data-toggle-read title="${t.read_local ? "Marcar como não lida (somente no MarquesPro)" : "Marcar como lida (somente no MarquesPro)"}">${ic(t.read_local ? "mark_email_unread" : "drafts")}</button>
       </div></div>`;
-  }).join("");
+  }
 }
 
 // ─── Leitura ─────────────────────────────────────────────────────────────
@@ -572,7 +590,7 @@ function renderCounterPop() {
     ${s.novas.length ? `<h4>Últimos recebidos</h4>` + s.novas.map(x => `<div class="nt" data-acc="${esc(x.account)}" data-tid="${esc(x.thread_id)}"><b>${esc(x.from_name || "")}</b><br><span class="muted">${esc(x.subject || "")} · ${esc(x.created_at.slice(11, 16))}</span></div>`).join("") : ""}
     <h4>Sincronização</h4>${s.contas.map(c => `<div class="kv"><span class="muted">${esc(c.email)}</span><span class="muted">${c.last_error ? "Erro: " + esc(c.last_error.slice(0, 60)) : esc(c.last_sync || "—")}</span></div>`).join("")}`;
   $("#pop-ver-notif").onclick = guard(async () => {
-    $("#counter-pop").classList.add("hidden"); state.folder = {id: "NOTIF"}; state.search = ""; state.offset = 0; renderSidebar(); await loadThreads();
+    $("#counter-pop").classList.add("hidden"); state.folder = {id: "NOTIF"}; state.grupo = ""; state.search = ""; state.offset = 0; renderSidebar(); await loadThreads();
   });
   $$("#counter-pop .nt").forEach(x => x.onclick = guard(() => { $("#counter-pop").classList.add("hidden"); return openThread(x.dataset.acc, x.dataset.tid); }));
 }
@@ -661,19 +679,19 @@ function bind() {
   }, {once: true});
 
   $("#btn-menu").onclick = () => { $("#sidebar").classList.toggle(innerWidth < 760 ? "open" : "collapsed"); };
-  $("#brand").onclick = guard(async (e) => { e.preventDefault(); state.folder = {id: "INBOX", cat: "principal"}; state.search = ""; $("#search-input").value = ""; state.offset = 0; renderSidebar(); await loadThreads(); });
+  $("#brand").onclick = guard(async (e) => { e.preventDefault(); state.folder = {id: "INBOX"}; state.search = ""; $("#search-input").value = ""; state.offset = 0; renderSidebar(); await loadThreads(); });
   $("#btn-account").onclick = (e) => { e.stopPropagation(); const m = $("#account-menu"); const hid = m.classList.contains("hidden"); closeMenus(); if (hid) { renderAccountMenu(); m.classList.remove("hidden"); } };
   $("#account-menu").onclick = (e) => e.stopPropagation();
   $("#folders").onclick = guard(async (e) => {
     const li = e.target.closest("li[data-folder]"); if (!li) return;
-    state.folder = {id: li.dataset.folder, cat: li.dataset.folder === "INBOX" ? "principal" : undefined};
+    state.folder = {id: li.dataset.folder}; state.grupo = "";
     state.search = ""; $("#search-input").value = ""; state.offset = 0;
     if (innerWidth < 760) $("#sidebar").classList.remove("open");
     renderSidebar(); await loadThreads();
   });
   $("#label-list").onclick = guard(async (e) => {
     const li = e.target.closest("li[data-label-name]"); if (!li) return;
-    state.folder = {id: li.dataset.labelId, name: li.dataset.labelName}; state.search = ""; $("#search-input").value = ""; state.offset = 0;
+    state.folder = {id: li.dataset.labelId, name: li.dataset.labelName}; state.grupo = ""; state.search = ""; $("#search-input").value = ""; state.offset = 0;
     if (innerWidth < 760) $("#sidebar").classList.remove("open");
     renderSidebar(); await loadThreads();
   });

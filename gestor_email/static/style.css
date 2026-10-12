@@ -91,16 +91,18 @@ a{color:var(--blue)}
 .pager{font-size:12px;color:var(--text2);padding:0 8px;font-variant-numeric:tabular-nums;white-space:nowrap}
 .hint{font-size:12px;color:var(--muted)}
 
-/* Abas Principal / Promoções / Social / Atualizações */
-.tabs-inbox{display:flex;border-bottom:1px solid var(--line);flex-shrink:0;overflow-x:auto}
-.tabs-inbox button{flex:1;max-width:256px;min-width:140px;display:flex;align-items:center;gap:16px;height:56px;padding:0 16px;border:0;background:transparent;color:var(--text2);font-weight:500;position:relative;text-align:left}
-.tabs-inbox button:hover{background:var(--hover)}
-.tabs-inbox button.on{color:var(--blue)}
-.tabs-inbox button.on::after{content:"";position:absolute;left:8px;right:8px;bottom:0;height:3px;border-radius:3px 3px 0 0;background:var(--blue)}
-.tabs-inbox .new{font-size:11px;font-weight:500;border-radius:8px;padding:1px 6px;color:#fff;background:var(--blue);margin-left:auto}
-.tabs-inbox button[data-cat="promocoes"] .new{background:#188038}
-.tabs-inbox button[data-cat="social"] .new{background:#1a73e8}
-.tabs-inbox button[data-cat="atualizacoes"] .new{background:#e37400}
+/* Filtros rápidos de destaque (intimações, citações, notificações) */
+.tabs-inbox{display:flex;gap:8px;padding:4px 16px 12px;flex-shrink:0;overflow-x:auto;border-bottom:1px solid var(--line)}
+.filter-chip{display:inline-flex;align-items:center;gap:8px;height:32px;padding:0 12px;border:1px solid #747775;border-radius:8px;background:#fff;color:var(--text2);font-weight:500;font-size:14px;white-space:nowrap;flex-shrink:0}
+.filter-chip:hover{background:rgba(68,71,70,.08)}
+.filter-chip.on{background:var(--sel);border-color:transparent;color:#001d35}
+.filter-chip .n{min-width:20px;height:20px;padding:0 6px;border-radius:10px;background:#d93025;color:#fff;font-size:12px;font-weight:500;display:inline-grid;place-items:center;line-height:1}
+.sec-head{display:flex;align-items:center;gap:8px;padding:14px 16px 8px 20px;font-size:14px;font-weight:500;color:#1f1f1f;border-bottom:1px solid var(--line);background:#fff}
+.sec-head .muted{font-weight:400}
+.sec-head .n{margin-left:auto;font-weight:500;color:#8c1d18;font-variant-numeric:tabular-nums}
+.sec-head.hl .ms{color:#d93025}
+.row-t.hl{box-shadow:inset 4px 0 0 #d93025;background:#fffbfa}
+.row-t.hl:hover{box-shadow:inset 4px 0 0 #d93025,0 1px 2px 0 rgba(60,64,67,.3),0 1px 3px 1px rgba(60,64,67,.15)}
 
 /* ─── Lista ────────────────────────────────────────────────────────────── */
 .thread-list{overflow-y:auto;flex:1}
@@ -270,9 +272,8 @@ table.rules th{color:var(--text2);font-weight:500}
   .row-t .mid{flex-basis:100%;padding:0 0 0 64px}
   .row-t .line1{flex-wrap:wrap;white-space:normal}
   .row-t .subj{white-space:nowrap;flex:1;min-width:0}.row-t .snip{display:none}
-  .tabs-inbox .new{display:none}
   .tv-head,.reply-bar{padding-left:16px}.msg-body{margin-left:0}
-  .filter-unread{display:none}.tabs-inbox button{min-width:56px;gap:6px}.tabs-inbox .tname{display:none}
+  .filter-unread{display:none}.sec-head .muted{display:none}
   .setting{grid-template-columns:1fr}
   .counter-pop{left:8px;right:8px;width:auto}
 }

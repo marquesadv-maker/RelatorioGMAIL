@@ -174,6 +174,9 @@ def create_app() -> Flask:
         categoria = request.args.get("categoria")
         if categoria:
             where.append(_category_sql(categoria))
+        grupo = request.args.get("grupo")
+        if grupo in GRUPOS_NOTIF:
+            where.append(GRUPOS_NOTIF[grupo])
         if q:
             for term in q.split():
                 like = f"%{term}%"
@@ -187,7 +190,16 @@ def create_app() -> Flask:
                 FROM messages m WHERE {' AND '.join(where)}
                 GROUP BY m.account, m.thread_id
             )"""
-        flt = f"WHERE NOT {read}" if unread_local else ""
+        conds = []
+        if unread_local:
+            conds.append(f"NOT {read}")
+        # Destaques: notificações judiciais ainda não abertas no MarquesPro
+        destaque = request.args.get("destaque")
+        if destaque in ("1", "0"):
+            is_hl = (f"(EXISTS (SELECT 1 FROM messages mn WHERE mn.account=t.account AND mn.thread_id=t.thread_id "
+                     f"AND mn.tipo='TRIBUNAL') AND NOT {read})")
+            conds.append(is_hl if destaque == "1" else f"NOT {is_hl}")
+        flt = ("WHERE " + " AND ".join(conds)) if conds else ""
         total = db.one(f"{base} SELECT COUNT(*) AS n FROM matched t {flt}", params)["n"]
         sql = f"""{base}
             SELECT t.account, t.thread_id, t.last_date,
@@ -329,11 +341,20 @@ def create_app() -> Flask:
         notif_pend = db.one(
             f"""SELECT COUNT(*) AS n FROM (SELECT DISTINCT m.account, m.thread_id {notif_where}) t
                 WHERE NOT {_read_sql('t.account', 't.thread_id')}""", acc_params)["n"]
+        grupos = {}
+        for g, cond in GRUPOS_NOTIF.items():
+            grupos[g] = db.one(
+                f"""SELECT COUNT(*) AS n FROM (SELECT DISTINCT m.account, m.thread_id FROM messages m
+                    WHERE {cond} {acc_sql}
+                    AND NOT EXISTS (SELECT 1 FROM message_labels x WHERE x.account=m.account
+                                    AND x.message_id=m.id AND x.label_id IN ('SENT','SPAM','TRASH'))) t
+                    WHERE NOT {_read_sql('t.account', 't.thread_id')}""", acc_params)["n"]
         notif_tipos = db.rows(
             f"SELECT COALESCE(m.subtipo,'Outras') AS nome, COUNT(*) AS n {notif_where} AND m.internal_date>=? "
             "GROUP BY nome ORDER BY n DESC", acc_params + [ms])
         return jsonify({
-            "notificacoes": {"hoje": notif_hoje, "pendentes": notif_pend, "por_tipo": notif_tipos},
+            "notificacoes": {"hoje": notif_hoje, "pendentes": notif_pend, "por_tipo": notif_tipos,
+                             "pendentes_por_grupo": grupos},
             "recebidas_hoje": today,
             "notificacoes_hoje": notif_today,
             "nao_lidas_local": unread_local,
@@ -564,6 +585,13 @@ def _require_account(acc) -> str:
         raise RuntimeError("Conta não conectada")
     return acc
 
+
+# Destaques: intimações, citações e demais notificações judiciais
+GRUPOS_NOTIF = {
+    "intimacoes": "m.tipo='TRIBUNAL' AND m.subtipo='Intimação'",
+    "citacoes": "m.tipo='TRIBUNAL' AND m.subtipo='Citação'",
+    "notificacoes": "m.tipo='TRIBUNAL' AND COALESCE(m.subtipo,'') NOT IN ('Intimação','Citação')",
+}
 
 CATEGORY_LABELS = {"promocoes": "CATEGORY_PROMOTIONS", "social": "CATEGORY_SOCIAL",
                    "atualizacoes": "CATEGORY_UPDATES", "foruns": "CATEGORY_FORUMS"}
