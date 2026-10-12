@@ -1,0 +1,30 @@
+{
+  "numero": "0000000-00.0000.5.00.0000",
+  "classe": "Ação Trabalhista - Rito Ordinário",
+  "assunto": "Horas Extras",
+  "orgao_julgador": "1ª Vara do Trabalho de ...",
+  "comarca": "...",
+  "fase": "Conhecimento",
+  "status": "Ativo",
+  "desfecho": null,
+  "valor_causa": 0,
+  "valor_condenacao": null,
+  "valor_acordo": null,
+  "custas": null,
+  "data_ajuizamento": "AAAA-MM-DD",
+  "data_encerramento": null,
+  "transito_julgado": false,
+  "acordo_homologado": false,
+  "bloqueio": false,
+  "revelia": false,
+  "sindicato": false,
+  "acao_coletiva": false,
+  "pf_polo_passivo": false,
+  "sem_advogado_passivo": false,
+  "partes": [
+    {"nome": "NOME DA PARTE", "polo": "ativo", "tipo_pessoa": "PF"},
+    {"nome": "EMPRESA LTDA", "polo": "passivo", "tipo_pessoa": "PJ", "documento": "00.000.000/0001-00", "atividade_economica": "Comércio varejista"}
+  ],
+  "advogados": [{"nome": "NOME", "oab": "SP 000000", "polo": "passivo"}],
+  "magistrados": ["NOME DO(A) JUIZ(A)"]
+}

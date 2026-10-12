@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Legal Research Local</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="topo">
+  <div class="marca">⚖️ Legal Research <span>Local</span></div>
+  <nav>
+    <button class="tab ativo" data-view="busca">Busca</button>
+    <button class="tab" data-view="favoritos">Favoritos <span id="favCount" class="badge">0</span></button>
+    <button class="tab" data-view="fontes">Fontes de dados</button>
+    <button class="tab" data-view="painel">Painel</button>
+  </nav>
+  <div class="esfera">Esfera: <strong>Trabalhista</strong> · <span id="totalBase">—</span></div>
+</header>
+
+<main id="view-busca" class="view">
+  <aside class="filtros">
+    <div class="filtros-cab">
+      <h3>Filtrar LR</h3>
+      <div>
+        <button id="btnSalvarFiltro" class="link">Salvar filtro</button>
+        <button id="btnLimpar" class="link">Limpar</button>
+      </div>
+    </div>
+    <div id="filtrosSalvos" class="filtros-salvos"></div>
+
+    <details open><summary>Documento</summary>
+      <label>Tipo de documento <select multiple id="f_tiposDocumento" size="5"></select></label>
+      <label>Data do documento
+        <div class="linha"><input type="date" id="f_docIni"> <input type="date" id="f_docFim"></div></label>
+      <label>Fase do documento <select multiple id="f_fasesDocumento" size="3">
+        <option>Conhecimento</option><option>Liquidação</option><option>Execução</option></select></label>
+    </details>
+
+    <details open><summary>Termos avançados</summary>
+      <label>Todas as palavras <input id="a_todas"></label>
+      <label>Frase exata <input id="a_frase"></label>
+      <label>Ao menos uma das palavras <input id="a_alguma"></label>
+      <label>Nenhuma das palavras <input id="a_nenhuma"></label>
+      <div class="linha"><label>Nº da lei <input id="a_lei" placeholder="13.467"></label><label>Ano <input id="a_anoLei" placeholder="2017"></label></div>
+    </details>
+
+    <details open><summary>Tipos de trecho</summary>
+      <div class="chips" id="f_tiposEntidades">
+        <label><input type="checkbox" value="funcoes">Funções</label>
+        <label><input type="checkbox" value="fundamentos">Fundamentos</label>
+        <label><input type="checkbox" value="organizacoes">Organizações</label>
+        <label><input type="checkbox" value="pessoas">Pessoas</label>
+        <label><input type="checkbox" value="tribunais">Tribunais</label>
+        <label><input type="checkbox" value="juizes">Juízes</label>
+        <label><input type="checkbox" value="varas">Varas</label>
+      </div>
+      <small>Com um tipo marcado, o termo é procurado como entidade extraída do texto.</small>
+    </details>
+
+    <details><summary>Localização e órgãos</summary>
+      <label>UFs <select multiple id="f_ufs" size="4"></select></label>
+      <label>Tribunais <select multiple id="f_tribunais" size="4"></select></label>
+      <label>Órgão julgador <input id="f_orgao" list="dl_orgaoJulgador" placeholder="digite para sugerir"><datalist id="dl_orgaoJulgador"></datalist></label>
+      <label>Comarca <select multiple id="f_comarcas" size="3"></select></label>
+    </details>
+
+    <details><summary>Partes e profissionais</summary>
+      <label>Partes <input id="f_parte" list="dl_parte" placeholder="nome da parte"><datalist id="dl_parte"></datalist></label>
+      <label>Advogados <input id="f_advogado" list="dl_advogado"><datalist id="dl_advogado"></datalist></label>
+      <label>Magistrados <input id="f_magistrado" list="dl_magistrado"><datalist id="dl_magistrado"></datalist></label>
+      <label>CNPJ <input id="f_cnpj" placeholder="00.000.000/0001-00"></label>
+      <label>Atividade econômica <input id="f_atividade"></label>
+      <label>Nº do processo <input id="f_numero" list="dl_processo"><datalist id="dl_processo"></datalist></label>
+    </details>
+
+    <details><summary>Marcadores</summary>
+      <div class="chips">
+        <label><input type="checkbox" class="flag" value="sem_advogado_passivo">Sem advogados no polo passivo</label>
+        <label><input type="checkbox" class="flag" value="sindicato">Promovidos por sindicatos</label>
+        <label><input type="checkbox" class="flag" value="pf_polo_passivo">Pessoas físicas no polo passivo</label>
+        <label><input type="checkbox" class="flag" value="acao_coletiva">Ações coletivas</label>
+        <label><input type="checkbox" class="flag" value="covid">Covid-19</label>
+      </div>
+    </details>
+
+    <details><summary>Processo</summary>
+      <label>Período de ajuizamento <div class="linha"><input type="date" id="f_ajIni"> <input type="date" id="f_ajFim"></div></label>
+      <label>Status <select multiple id="f_status" size="3"><option>Ativo</option><option>Arquivado</option><option>Suspenso</option></select></label>
+      <label>Fase <select multiple id="f_fases" size="3"><option>Conhecimento</option><option>Liquidação</option><option>Execução</option></select></label>
+      <label>Tipos de desfecho <select multiple id="f_desfechos" size="3"></select></label>
+      <label>Assuntos <select multiple id="f_assuntos" size="4"></select></label>
+      <label>Classes <select multiple id="f_classes" size="3"></select></label>
+      <label>Grau <select multiple id="f_graus" size="2"><option>1º grau</option><option>2º grau</option></select></label>
+    </details>
+
+    <details><summary>Valores</summary>
+      <label>Valor da causa <div class="linha"><input type="number" id="v_causaMin" placeholder="mín"><input type="number" id="v_causaMax" placeholder="máx"></div></label>
+      <label>Condenação <div class="linha"><input type="number" id="v_condMin" placeholder="mín"><input type="number" id="v_condMax" placeholder="máx"></div></label>
+      <label>Acordo <div class="linha"><input type="number" id="v_acMin" placeholder="mín"><input type="number" id="v_acMax" placeholder="máx"></div></label>
+      <label>Liquidação <div class="linha"><input type="number" id="v_liqMin" placeholder="mín"><input type="number" id="v_liqMax" placeholder="máx"></div></label>
+      <label>Custas <div class="linha"><input type="number" id="v_cusMin" placeholder="mín"><input type="number" id="v_cusMax" placeholder="máx"></div></label>
+      <label class="chk"><input type="checkbox" id="v_anomalos"> Filtrar valores anômalos</label>
+    </details>
+
+    <details><summary>Situações</summary>
+      <div class="chips">
+        <label><input type="checkbox" class="flag" value="transito_julgado">Trânsito em julgado</label>
+        <label><input type="checkbox" class="flag" value="acordo_homologado">Acordo homologado</label>
+        <label><input type="checkbox" class="flag" value="bloqueio">Bloqueio</label>
+        <label><input type="checkbox" class="flag" value="revelia">Revelia</label>
+      </div>
+    </details>
+    <button id="btnAplicar" class="primario largo">Aplicar filtros</button>
+  </aside>
+
+  <section class="conteudo">
+    <form id="formBusca" class="barra">
+      <div class="modos">
+        <label><input type="radio" name="modo" value="normal" checked> Normal</label>
+        <label><input type="radio" name="modo" value="ia"> I.A. (sinônimos)</label>
+      </div>
+      <input id="q" placeholder='Pesquise nos documentos… use "aspas" para frase exata' autofocus>
+      <button class="primario" type="submit">Buscar</button>
+    </form>
+    <div class="resumo">
+      <div id="contagem">—</div>
+      <div class="acoes">
+        <button id="btnJurimetria" class="secundario">Jurimetria (<span id="juriN">0</span>)</button>
+        <select id="ordem">
+          <option value="relevancia">Mais relevante</option>
+          <option value="dataDesc">Mais recente</option>
+          <option value="dataAsc">Mais antigo</option>
+          <option value="processo">Por processo</option>
+        </select>
+      </div>
+    </div>
+    <div id="facetas" class="facetas"></div>
+    <div id="resultados" class="resultados"></div>
+    <div class="paginacao"><button id="prev" class="secundario">‹ Anterior</button><span id="pagInfo"></span><button id="next" class="secundario">Próxima ›</button></div>
+  </section>
+</main>
+
+<main id="view-favoritos" class="view oculto">
+  <section class="conteudo largo"><h2>Favoritos</h2><div id="listaFavoritos" class="resultados"></div></section>
+</main>
+
+<main id="view-fontes" class="view oculto">
+  <section class="conteudo largo">
+    <h2>Fontes de dados reais</h2>
+    <div id="statusFontes" class="cartao"></div>
+
+    <div class="cartao">
+      <h3>DataJud (CNJ) — por número de processo</h3>
+      <p>Consulta a <a href="https://datajud-wiki.cnj.jus.br/api-publica/" target="_blank" rel="noopener">API Pública do DataJud</a>: classe, assuntos, órgão julgador e movimentações. Não traz partes, advogados nem documentos.</p>
+      <textarea id="dj_numeros" rows="4" placeholder="Um número CNJ por linha, ex.: 0001234-56.2023.5.02.0001"></textarea>
+      <button id="dj_btnNumeros" class="primario">Importar do DataJud</button>
+      <pre id="dj_outNumeros" class="saida"></pre>
+    </div>
+
+    <div class="cartao">
+      <h3>DataJud (CNJ) — varredura por tribunal e filtros</h3>
+      <p>Códigos conforme as <a href="https://www.cnj.jus.br/sgt/consulta_publica_classes.php" target="_blank" rel="noopener">Tabelas Processuais Unificadas</a> (classe, assunto) e o órgão julgador do DataJud.</p>
+      <div class="grade">
+        <label>Tribunal <select id="dj_tribunal"></select></label>
+        <label>Classe (código) <input id="dj_classe" placeholder="985 = Ação Trabalhista - Rito Ordinário"></label>
+        <label>Assunto (código) <input id="dj_assunto" placeholder="ex.: 2704 = Horas Extras"></label>
+        <label>Órgão julgador (código) <input id="dj_orgao"></label>
+        <label>Grau <select id="dj_grau"><option value="">Todos</option><option value="G1">G1</option><option value="G2">G2</option></select></label>
+        <label>Ajuizamento de <input type="date" id="dj_ini"></label>
+        <label>até <input type="date" id="dj_fim"></label>
+        <label>Máximo de processos <input type="number" id="dj_max" value="200" min="1" max="2000"></label>
+      </div>
+      <button id="dj_btnFiltro" class="primario">Importar varredura</button>
+      <pre id="dj_outFiltro" class="saida"></pre>
+    </div>
+
+    <div class="cartao">
+      <h3>Busca por pessoa, parte ou advogado (provedor privado)</h3>
+      <p>Requer chave de API da Judit ou do Escavador no arquivo <code>.env</code>. Trata-se de dados pessoais: registre a finalidade (defesa em processo, diligência) e minimize o que for armazenado (LGPD).</p>
+      <div class="grade">
+        <label>Provedor <select id="pp_provedor"><option value="judit">Judit</option><option value="escavador">Escavador</option></select></label>
+        <label>Tipo <select id="pp_tipo"><option value="nome">Nome</option><option value="cpf">CPF</option><option value="cnpj">CNPJ</option><option value="oab">OAB (UF número)</option><option value="numero">Nº CNJ</option></select></label>
+        <label>Chave <input id="pp_chave"></label>
+      </div>
+      <button id="pp_btn" class="primario">Buscar e importar</button>
+      <pre id="pp_out" class="saida"></pre>
+    </div>
+
+    <div class="cartao">
+      <h3>Documentos do escritório (PDF, DOCX, TXT)</h3>
+      <p>Indexa as peças dos processos do próprio escritório: inteiro teor pesquisável, página a página, com extração de pessoas, organizações, juízes, varas, fundamentos e funções. CPFs são mascarados no índice.</p>
+      <label>Pasta no servidor <input id="idx_pasta" placeholder="caminho da pasta (um subdiretório por processo)"></label>
+      <label class="chk"><input type="checkbox" id="idx_reindex"> Reindexar tudo</label>
+      <button id="idx_btn" class="primario">Indexar pasta</button>
+      <hr>
+      <label>Ou envie arquivos (PDF/DOCX/TXT/ZIP) <input type="file" id="up_files" multiple></label>
+      <label>Nº do processo (opcional) <input id="up_numero"></label>
+      <button id="up_btn" class="primario">Enviar e indexar</button>
+      <pre id="idx_out" class="saida"></pre>
+    </div>
+  </section>
+</main>
+
+<main id="view-painel" class="view oculto">
+  <section class="conteudo largo"><h2>Painel</h2><div id="painel" class="grade-cartoes"></div></section>
+</main>
+
+<div id="modal" class="modal oculto"><div class="modal-caixa"><button id="modalFechar" class="fechar">×</button><div id="modalCorpo"></div></div></div>
+<div id="toast" class="toast oculto"></div>
+<script src="/static/app.js"></script>
+</body>
+</html>
