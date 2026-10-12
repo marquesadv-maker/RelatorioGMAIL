@@ -11,6 +11,7 @@ const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&
 
 const SYSTEM_FOLDERS = [
   {id: "INBOX", name: "Caixa de entrada", icon: "📥"},
+  {id: "NOTIF", name: "Notificações judiciais", icon: "⚖️"},
   {id: "STARRED", name: "Com estrela", icon: "⭐"},
   {id: "IMPORTANT", name: "Importante", icon: "🏷️"},
   {id: "SENT", name: "Enviados", icon: "📤"},
@@ -102,10 +103,13 @@ async function loadSendAs() { state.sendAs = await api("/api/send-as"); }
 
 function renderSidebar() {
   const unread = state.status ? state.status.nao_lidas_local : 0;
+  const notifPend = state.status && state.status.notificacoes ? state.status.notificacoes.pendentes : 0;
   $("#folders").innerHTML = SYSTEM_FOLDERS.map(f => `
-    <li data-folder="${f.id}" class="${state.folder.id === f.id && !state.folder.name ? "active" : ""}">
+    <li data-folder="${f.id}" class="${state.folder.id === f.id && !state.folder.name ? "active" : ""} ${f.id === "NOTIF" ? "notif" : ""}"
+      ${f.id === "NOTIF" ? 'title="Intimações, citações, publicações e demais avisos de tribunais ainda não abertos no MarquesPro"' : ""}>
       <span>${f.icon}</span><span class="name">${f.name}</span>
-      ${f.id === "INBOX" && unread ? `<span class="count">${unread}</span>` : ""}</li>`).join("");
+      ${f.id === "INBOX" && unread ? `<span class="count">${unread}</span>` : ""}
+      ${f.id === "NOTIF" && notifPend ? `<span class="count">${notifPend}</span>` : ""}</li>`).join("");
   // Etiquetas de usuário (mescladas por nome quando "Todas as contas")
   const src = state.account ? userLabels(state.account) : state.labels.filter(l => l.type === "user");
   const byName = new Map();
@@ -133,6 +137,7 @@ async function loadThreads() {
   } else {
     const p = {account: state.account, q: state.search, nao_lidas: $("#only-unread").checked ? 1 : ""};
     if (state.folder.name) { if (state.account) p.label = state.folder.id; else p.label_nome = state.folder.name; }
+    else if (state.folder.id === "NOTIF") { p.label = "ALL"; p.tipo = "TRIBUNAL"; }
     else p.label = state.folder.id;
     data = await api(`/api/threads?${qs(p)}`);
   }
@@ -154,7 +159,7 @@ function renderThreads() {
       <button class="star ${t.label_ids.includes("STARRED") ? "on" : ""}" title="Estrela">★</button>
       <div class="from">${esc(t.senders)}${t.count > 1 ? `<span class="cnt">${t.count}</span>` : ""}</div>
       ${multi ? `<span class="acc">${esc(t.account.split("@")[0])}</span>` : ""}
-      <div class="subj">${chips}${esc(t.subject)} <span class="snip">— ${esc(t.snippet)}</span></div>
+      <div class="subj">${t.notificacao ? `<span class="chip notif" title="Notificação judicial">⚖ ${esc(t.notificacao)}</span>` : ""}${chips}${esc(t.subject)} <span class="snip">— ${esc(t.snippet)}</span></div>
       ${t.unread_gmail ? `<span class="gm" title="Ainda não lida no Gmail (status preservado para a controladoria)">não lida no Gmail</span>` : ""}
       ${t.has_attachments ? "📎" : ""}
       <div class="date">${fmtDate(t.last_date)}</div></div>`;
@@ -421,6 +426,13 @@ async function refreshStatus() {
   const first = state.lastNotif === null;
   state.status = s;
   $("#counter-num").textContent = s.recebidas_hoje;
+  const nh = s.notificacoes.hoje;
+  $("#notif-num").textContent = nh;
+  if (!first && state.notifHoje != null && nh > state.notifHoje) {
+    const c = $("#counter-notif"); c.classList.remove("pulse"); void c.offsetWidth; c.classList.add("pulse");
+    toast(`⚖️ ${nh - state.notifHoje} nova(s) notificação(ões) judicial(is)`);
+  }
+  state.notifHoje = nh;
   if (!first && s.novas.length) {
     $("#counter").classList.remove("pulse"); void $("#counter").offsetWidth; $("#counter").classList.add("pulse");
     s.novas.slice(0, 3).forEach(n => {
@@ -433,20 +445,29 @@ async function refreshStatus() {
     if (!$("#thread-list").classList.contains("hidden")) loadThreads();
   }
   state.lastNotif = s.ultimo_id;
-  document.title = (s.nao_lidas_local ? `(${s.nao_lidas_local}) ` : "") + "MarquesPro Mail";
+  document.title = (s.notificacoes.pendentes ? `⚖${s.notificacoes.pendentes} · ` : "") + (s.nao_lidas_local ? `(${s.nao_lidas_local}) ` : "") + "MarquesPro Mail";
   renderSidebar();
   if (!$("#counter-pop").classList.contains("hidden")) renderCounterPop();
 }
 function renderCounterPop() {
   const s = state.status; if (!s) return;
+  const n = s.notificacoes;
   $("#counter-pop").innerHTML = `
-    <h4>Hoje</h4>
-    <div class="kv"><span>Recebidas na caixa de entrada</span><b>${s.recebidas_hoje}</b></div>
-    <div class="kv"><span>Novas notificações registradas hoje</span><b>${s.notificacoes_hoje}</b></div>
+    <h4>⚖️ Notificações judiciais</h4>
+    <div class="big"><b>${n.hoje}</b><span>recebidas hoje</span></div>
+    <div class="kv"><span>Pendentes de abertura no MarquesPro (todas as datas)</span><b>${n.pendentes}</b></div>
+    ${n.por_tipo.map(t => `<div class="kv"><span>${esc(t.nome)}</span><b>${t.n}</b></div>`).join("")}
+    <div class="row"><button class="btn primary" id="pop-ver-notif">Ver notificações</button></div>
+    <h4>E-mails de hoje</h4>
+    <div class="kv"><span>Recebidas na caixa de entrada (total)</span><b>${s.recebidas_hoje}</b></div>
+    <div class="kv"><span>Novos e-mails desde que o sistema abriu</span><b>${s.notificacoes_hoje}</b></div>
     <div class="kv"><span>Não lidas no MarquesPro</span><b>${s.nao_lidas_local}</b></div>
     ${s.hoje_por_etiqueta.length ? `<h4>Por etiqueta (hoje)</h4>` + s.hoje_por_etiqueta.map(l => `<div class="kv"><span>${esc(l.name)}</span><b>${l.n}</b></div>`).join("") : ""}
-    ${s.novas.length ? `<h4>Últimas notificações</h4>` + s.novas.map(n => `<div class="nt" data-acc="${esc(n.account)}" data-tid="${esc(n.thread_id)}"><b>${esc(n.from_name || "")}</b><br><small>${esc(n.subject || "")} · ${esc(n.created_at.slice(11, 16))}</small></div>`).join("") : ""}
+    ${s.novas.length ? `<h4>Últimos e-mails recebidos</h4>` + s.novas.map(n => `<div class="nt" data-acc="${esc(n.account)}" data-tid="${esc(n.thread_id)}"><b>${esc(n.from_name || "")}</b><br><small>${esc(n.subject || "")} · ${esc(n.created_at.slice(11, 16))}</small></div>`).join("") : ""}
     <h4>Sincronização</h4>${s.contas.map(c => `<div class="kv"><small>${esc(c.email)}</small><small>${c.last_error ? "⚠ " + esc(c.last_error.slice(0, 60)) : esc(c.last_sync || "—")}</small></div>`).join("")}`;
+  $("#pop-ver-notif").onclick = guard(async () => {
+    $("#counter-pop").classList.add("hidden"); state.folder = {id: "NOTIF"}; state.search = ""; renderSidebar(); await loadThreads();
+  });
   $$("#counter-pop .nt").forEach(n => n.onclick = guard(() => { $("#counter-pop").classList.add("hidden"); return openThread(n.dataset.acc, n.dataset.tid); }));
 }
 
@@ -563,7 +584,7 @@ function bind() {
     r.filter(x => x.status === "erro").forEach(x => toast(`${x.account}: ${x.erro}`, true));
     await loadLabels(); await refreshStatus(); await loadThreads();
   });
-  $("#counter").onclick = (e) => { e.stopPropagation(); const p = $("#counter-pop"); p.classList.toggle("hidden"); renderCounterPop(); };
+  $("#counter").onclick = $("#counter-notif").onclick = (e) => { e.stopPropagation(); const p = $("#counter-pop"); p.classList.toggle("hidden"); renderCounterPop(); };
   $("#counter-pop").onclick = (e) => e.stopPropagation();
 
   // Lista

@@ -26,6 +26,7 @@ SYSTEM_LABEL_NAMES = {
 
 def create_app() -> Flask:
     app = Flask(__name__, static_folder="static", static_url_path="/static")
+    db.backfill_tipos()
     app.config["SESSION_TOKEN"] = secrets.token_urlsafe(32)
     app.config["MAX_CONTENT_LENGTH"] = 30 * 1024 * 1024  # anexos até ~25 MB
 
@@ -68,8 +69,8 @@ def create_app() -> Flask:
         resp = Response(page, mimetype="text/html")
         # Scripts só com nonce: atributos on* em HTML de e-mails nunca executam
         resp.headers["Content-Security-Policy"] = (
-            f"default-src 'self'; script-src 'nonce-{nonce}'; style-src 'self' 'unsafe-inline'; "
-            "img-src 'self' data: https: http:; font-src 'self' data:; connect-src 'self'; "
+            f"default-src 'self'; script-src 'nonce-{nonce}'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+            "img-src 'self' data: https: http:; font-src 'self' data: https://fonts.gstatic.com; connect-src 'self'; "
             "frame-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'"
         )
         resp.headers["Cache-Control"] = "no-store"
@@ -153,6 +154,10 @@ def create_app() -> Flask:
         if account:
             where.append("m.account=?")
             params.append(account)
+        tipo = request.args.get("tipo")
+        if tipo:
+            where.append("m.tipo=?")
+            params.append(tipo)
         label_name = request.args.get("label_nome")
         if label_name:
             # Etiqueta de usuário pelo nome (os IDs diferem entre contas)
@@ -294,7 +299,19 @@ def create_app() -> Flask:
         notif_today = db.one(
             f"SELECT COUNT(*) AS n FROM notifications WHERE created_at>=? {nacc_sql}",
             [midnight.strftime("%Y-%m-%d %H:%M:%S")] + acc_params)["n"]
+        notif_where = f"""FROM messages m WHERE m.tipo='TRIBUNAL' {acc_sql}
+                AND NOT EXISTS (SELECT 1 FROM message_labels x WHERE x.account=m.account
+                                AND x.message_id=m.id AND x.label_id IN ('SENT','SPAM','TRASH'))"""
+        notif_hoje = db.one(f"SELECT COUNT(*) AS n {notif_where} AND m.internal_date>=?", acc_params + [ms])["n"]
+        notif_pend = db.one(
+            f"""SELECT COUNT(DISTINCT m.account || m.thread_id) AS n {notif_where}
+                AND NOT EXISTS (SELECT 1 FROM local_read lr WHERE lr.account=m.account AND lr.thread_id=m.thread_id)""",
+            acc_params)["n"]
+        notif_tipos = db.rows(
+            f"SELECT COALESCE(m.subtipo,'Outras') AS nome, COUNT(*) AS n {notif_where} AND m.internal_date>=? "
+            "GROUP BY nome ORDER BY n DESC", acc_params + [ms])
         return jsonify({
+            "notificacoes": {"hoje": notif_hoje, "pendentes": notif_pend, "por_tipo": notif_tipos},
             "recebidas_hoje": today,
             "notificacoes_hoje": notif_today,
             "nao_lidas_local": unread_local,
@@ -511,7 +528,7 @@ def _require_account(acc) -> str:
 
 def _thread_summary(t: Dict[str, Any]) -> Dict[str, Any]:
     msgs = db.rows(
-        "SELECT id, from_name, from_email, subject, snippet, label_ids, internal_date, has_attachments "
+        "SELECT id, from_name, from_email, subject, snippet, label_ids, internal_date, has_attachments, tipo, subtipo "
         "FROM messages WHERE account=? AND thread_id=? ORDER BY internal_date",
         (t["account"], t["thread_id"]))
     last = msgs[-1]
@@ -536,4 +553,5 @@ def _thread_summary(t: Dict[str, Any]) -> Dict[str, Any]:
         "label_ids": labels,
         "has_attachments": any(m["has_attachments"] for m in msgs),
         "last_message_id": last["id"],
+        "notificacao": next((m["subtipo"] or "Outras" for m in msgs if m["tipo"] == "TRIBUNAL"), None),
     }

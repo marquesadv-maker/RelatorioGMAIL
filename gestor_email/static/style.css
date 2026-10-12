@@ -1,11 +1,15 @@
 :root{
-  --bg:#f6f8fc; --panel:#ffffff; --text:#202124; --muted:#5f6368; --line:#e5e8ee;
-  --hover:#f2f4f8; --sel:#c2e7ff; --accent:#0b57d0; --accent-soft:#d3e3fd;
-  --unread:#ffffff; --read:#f2f6fc; --danger:#b3261e; --compose:#c2e7ff;
+  /* Identidade Marques Advogados — manual "Visual Instagram 2023" */
+  --navy:#0C0E34; --nude:#F8F3ED; --creme:#F2E5BD; --areia:#D9C6A3; --dourado:#8C5818; --marrom:#401801;
+  --bg:var(--nude); --panel:#ffffff; --text:var(--navy); --muted:#5f5b6e; --line:#ece3d4;
+  --hover:#f7f0e4; --sel:var(--creme); --accent:var(--dourado); --accent-soft:var(--creme);
+  --unread:#ffffff; --read:#fbf8f3; --danger:#a1271e; --compose:var(--creme);
+  --sans:"Quicksand","Fredoka","Baloo 2","Nunito",sans-serif;
+  --destaque:"Playfair Display","Georgia",serif;
 }
 *{box-sizing:border-box}
 html,body{margin:0;height:100%;background:var(--bg);color:var(--text);
-  font-family:"Google Sans",Roboto,"Segoe UI",Arial,sans-serif;font-size:14px}
+  font-family:var(--sans);font-weight:500;font-size:14px}
 button{font:inherit;cursor:pointer}
 input,select{font:inherit}
 .hidden{display:none!important}
@@ -176,3 +180,55 @@ table.rules th,table.rules td{text-align:left;padding:8px;border-bottom:1px soli
   .row-t .from{width:110px}.row-t .acc,.row-t .gm{display:none}
   .main{margin:0}
 }
+
+
+/* ─── Identidade visual Marques ─────────────────────────────────────────── */
+.topbar{background:var(--navy);color:#fff;padding:0 16px}
+.brand{color:#fff;min-width:230px;gap:10px;font-size:19px}
+.brand img{height:28px;width:auto;display:block}
+.brand b{color:#fff;font-weight:700}
+.brand em{font-family:var(--destaque);font-style:italic;font-weight:500;color:var(--areia);margin-left:2px}
+.topbar .icon-btn{color:var(--creme)}
+.topbar .icon-btn:hover{background:rgba(242,229,189,.14)}
+.search{background:rgba(255,255,255,.1);border:1px solid rgba(217,198,163,.25)}
+.search input{color:#fff}
+.search input::placeholder{color:rgba(248,243,237,.65)}
+.search-mode{color:rgba(248,243,237,.75)}
+.search:focus-within{background:#fff}
+.search:focus-within input{color:var(--navy)}
+.search:focus-within .search-mode{color:var(--muted)}
+#account-select{background:rgba(255,255,255,.08);color:#fff;border-color:rgba(217,198,163,.35)}
+#account-select option{color:var(--navy)}
+.counter{background:rgba(242,229,189,.14);color:var(--creme);border:1px solid rgba(217,198,163,.3)}
+.counter-notif{background:var(--dourado);color:#fff;border:0}
+.counter-notif .counter-lbl{color:var(--creme)}
+.counter.pulse{animation:pulse-m 1s ease 3}
+@keyframes pulse-m{50%{background:var(--areia);color:var(--marrom)}}
+.counter-pop{border:1px solid var(--line)}
+.counter-pop h4{font-weight:700;color:var(--marrom)}
+.counter-pop .big{display:flex;align-items:baseline;gap:8px;margin:2px 0 10px}
+.counter-pop .big b{font-size:34px;line-height:1;color:var(--dourado);font-variant-numeric:tabular-nums}
+.counter-pop .kv b{font-variant-numeric:tabular-nums}
+.compose-btn{background:var(--creme);color:var(--marrom);font-weight:700;box-shadow:none;border:1px solid var(--areia)}
+.compose-btn:hover{box-shadow:0 2px 6px rgba(64,24,1,.18)}
+.folders li.active{background:var(--creme);color:var(--marrom)}
+.folders li.notif{color:var(--marrom);font-weight:600}
+.folders li.notif .count{background:var(--dourado);color:#fff;border-radius:10px;padding:1px 7px}
+.labels-head{font-weight:700;color:var(--marrom)}
+.main{border:1px solid var(--line)}
+.row-t.unread .from,.row-t.unread .subj{color:var(--navy)}
+.row-t.selected{background:var(--creme)}
+.chip.notif{background:var(--marrom);color:var(--creme)}
+.row-t .gm{color:var(--dourado);background:#fbf1dc}
+.send-btn,.btn.primary{background:var(--navy);border-color:var(--navy);color:#fff}
+.send-btn:hover,.btn.primary:hover{background:#1a1d52}
+.tab.active{color:var(--dourado);border-color:var(--dourado)}
+.compose-head{background:var(--navy);color:#fff}
+.compose-head .icon-btn{color:var(--creme)}
+.tv-subject{font-weight:600}
+.avatar{font-weight:700}
+:focus-visible{outline:2px solid var(--dourado);outline-offset:2px}
+@media (prefers-reduced-motion:reduce){.counter.pulse{animation:none}}
+.brand span,.counter,.counter-lbl{white-space:nowrap}
+@media (max-width:1200px){.counter .counter-lbl{display:none}}
+@media (max-width:800px){.brand span{display:none}.brand{min-width:0}}

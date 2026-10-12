@@ -11,7 +11,7 @@ import threading
 from contextlib import contextmanager
 from typing import Any, Dict, Iterable, List, Optional
 
-from . import config
+from . import classify, config
 
 _init_lock = threading.Lock()
 _initialized_for: Optional[str] = None
@@ -41,6 +41,8 @@ CREATE TABLE IF NOT EXISTS messages (
     references_header TEXT,
     has_attachments INTEGER NOT NULL DEFAULT 0,
     body_json     TEXT,
+    tipo          TEXT,
+    subtipo       TEXT,
     first_seen    TEXT NOT NULL DEFAULT (datetime('now','localtime')),
     PRIMARY KEY (account, id)
 );
@@ -122,6 +124,12 @@ def _connect() -> sqlite3.Connection:
             conn = sqlite3.connect(db_file)
             conn.execute("PRAGMA journal_mode=WAL")
             conn.executescript(SCHEMA)
+            # Migração de bancos criados antes do contador de notificações
+            cols = {r[1] for r in conn.execute("PRAGMA table_info(messages)")}
+            for col in ("tipo", "subtipo"):
+                if col not in cols:
+                    conn.execute(f"ALTER TABLE messages ADD COLUMN {col} TEXT")
+            conn.execute("CREATE INDEX IF NOT EXISTS ix_msg_tipo ON messages(tipo)")
             conn.commit()
             conn.close()
             _initialized_for = db_file
@@ -170,8 +178,8 @@ def upsert_message(account: str, m: Dict[str, Any]) -> bool:
             """
             INSERT INTO messages (id, account, thread_id, internal_date, from_raw,
                 from_name, from_email, to_raw, cc_raw, subject, snippet, label_ids,
-                message_id_header, references_header, has_attachments)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                message_id_header, references_header, has_attachments, tipo, subtipo)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(account, id) DO UPDATE SET
                 thread_id=excluded.thread_id,
                 label_ids=excluded.label_ids,
@@ -183,6 +191,7 @@ def upsert_message(account: str, m: Dict[str, Any]) -> bool:
                 m["from_name"], m["from_email"], m["to_raw"], m["cc_raw"], m["subject"],
                 m["snippet"], json.dumps(m["label_ids"]), m["message_id_header"],
                 m["references_header"], 1 if m.get("has_attachments") else 0,
+                *classify.classify(m["from_raw"], m["subject"], m["snippet"]),
             ),
         )
         _set_labels(c, account, m["id"], m["label_ids"])
@@ -246,3 +255,13 @@ def set_account_state(email: str, **fields):
         return
     cols = ", ".join(f"{k}=?" for k in fields)
     execute(f"UPDATE accounts SET {cols} WHERE email=?", (*fields.values(), email))
+
+
+def backfill_tipos() -> int:
+    """Classifica mensagens antigas do cache que ainda não têm tipo."""
+    pend = rows("SELECT account, id, from_raw, subject, snippet FROM messages WHERE tipo IS NULL")
+    with connection() as c:
+        for r in pend:
+            c.execute("UPDATE messages SET tipo=?, subtipo=? WHERE account=? AND id=?",
+                      (*classify.classify(r["from_raw"], r["subject"], r["snippet"]), r["account"], r["id"]))
+    return len(pend)

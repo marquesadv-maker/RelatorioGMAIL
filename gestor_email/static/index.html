@@ -4,20 +4,25 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>MarquesPro Mail</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Quicksand:wght@400;500;600;700&family=Playfair+Display:ital,wght@1,500&display=swap">
 <link rel="stylesheet" href="/static/style.css">
 <script>window.GESTOR_TOKEN = "__TOKEN__";</script>
 </head>
 <body>
 <header class="topbar">
   <button class="icon-btn" id="btn-menu" title="Menu">☰</button>
-  <div class="brand"><span class="brand-mark">M</span><span>MarquesPro <b>Mail</b></span></div>
+  <div class="brand"><img src="/static/logo-m-branco.png" alt="Marques Advogados"><span><b>MarquesPro</b> <em>Mail</em></span></div>
   <form class="search" id="search-form">
     <span class="search-ic">🔍</span>
     <input id="search-input" type="search" placeholder="Pesquisar e-mail (aceita operadores do Gmail: from:, has:attachment, label:...)">
     <label class="search-mode" title="Buscar diretamente no Gmail, inclusive mensagens antigas"><input type="checkbox" id="search-gmail"> no Gmail</label>
   </form>
-  <button class="counter" id="counter" title="Notificações recebidas hoje">
-    <span class="counter-ic">🔔</span><span id="counter-num">0</span><span class="counter-lbl">hoje</span>
+  <button class="counter counter-notif" id="counter-notif" title="Notificações judiciais (intimações, citações, publicações) recebidas hoje">
+    <span class="counter-ic">⚖️</span><span id="notif-num">0</span><span class="counter-lbl">notificações hoje</span>
+  </button>
+  <button class="counter" id="counter" title="Total de e-mails recebidos hoje na caixa de entrada">
+    <span class="counter-ic">🔔</span><span id="counter-num">0</span><span class="counter-lbl">e-mails hoje</span>
   </button>
   <select id="account-select" title="Conta"></select>
   <button class="icon-btn" id="btn-sync" title="Sincronizar agora">⟳</button>

@@ -178,6 +178,23 @@ class GestorTest(unittest.TestCase):
         sa = self.get("/api/send-as")
         self.assertEqual(next(s for s in sa if s["email"] == ME)["signature"], "Local")
 
+    def test_contador_de_notificacoes(self):
+        self.g.add_message("PJe TRT2 <pje@trt2.jus.br>", "Intimação - Processo 123")
+        self.g.add_message("DJE <dje@tjsp.jus.br>", "Publicação no Diário Oficial")
+        self.g.add_message("Cliente <cliente@ex.com>", "Oi, tudo bem?")
+        sync.sync_account(ME)
+        n = self.get("/api/status")["notificacoes"]
+        self.assertEqual(n["hoje"], 2)
+        self.assertEqual(n["pendentes"], 2)
+        self.assertEqual({t["nome"] for t in n["por_tipo"]}, {"Intimação", "Publicação / DJE"})
+        lista = self.get("/api/threads?label=ALL&tipo=TRIBUNAL")
+        self.assertEqual(len(lista), 2)
+        self.assertTrue(all(t["notificacao"] for t in lista))
+        # Abrir no sistema reduz "pendentes" sem alterar o Gmail
+        self.get(f"/api/threads/{ME}/{lista[0]['thread_id']}")
+        self.assertEqual(self.get("/api/status")["notificacoes"]["pendentes"], 1)
+        self.assertEqual(self.g.modify_calls, [])
+
     def test_anexo_svg_nunca_inline(self):
         mid = self.g.add_message("X <x@ex.com>", "Img")
         r = self.client.get(f"/api/attachment/{ME}/{mid}/a1?inline=1&tipo=image/svg%2Bxml&nome=a.svg", headers=self.h)
