@@ -16,6 +16,7 @@ NÃO há partes, advogados, valores nem inteiro teor.
 import json
 import os
 import re
+from concurrent.futures import ThreadPoolExecutor
 import urllib.error
 import urllib.request
 from datetime import datetime
@@ -79,6 +80,27 @@ def buscar_por_numero(numero: str) -> List[Dict[str, Any]]:
     alias = alias_for(formatar(numero_limpo))
     res = _post(alias, {"query": {"match": {"numeroProcesso": numero_limpo}}, "size": 10})
     return [h["_source"] for h in res.get("hits", {}).get("hits", [])]
+
+
+def buscar_varios(numeros: List[str], workers: int = 8):
+    """Consulta vários números em paralelo. Retorna (fontes, erros)."""
+    fontes, erros = [], []
+
+    def um(n):
+        try:
+            hits = buscar_por_numero(n)
+            return n, hits, None
+        except Exception as e:  # noqa
+            return n, [], str(e)
+
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        for n, hits, err in pool.map(um, [x.strip() for x in numeros if x.strip()]):
+            if err:
+                erros.append(f"{n}: {err}")
+            elif not hits:
+                erros.append(f"{n}: não encontrado no DataJud")
+            fontes.extend(hits)
+    return fontes, erros
 
 
 def buscar_filtrado(tribunal: str, classe_codigo: Optional[int] = None, orgao_codigo: Optional[int] = None,
@@ -205,12 +227,17 @@ def _derivar(src: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def importar(fontes: List[Dict[str, Any]], log=print) -> Dict[str, Any]:
-    """Grava processos do DataJud no banco local como processo + documento 'Movimentações (DataJud)'."""
+def importar(fontes, log=print, progress=None, total: Optional[int] = None) -> Dict[str, Any]:
+    """Grava processos do DataJud no banco local como processo + documento 'Movimentações (DataJud)'.
+    Aceita lista ou iterador (varredura paginada): grava em lotes, com commit a cada 50."""
     db.init_db()
     stats = {"processos": 0, "atualizados": 0, "sigilosos": 0}
     with db.session() as con:
-        for src in fontes:
+        for i, src in enumerate(fontes, 1):
+            if i % 50 == 0:
+                con.commit()
+            if progress:
+                progress(i, total, str(src.get("numeroProcesso", "")))
             numero = formatar(str(src.get("numeroProcesso", "")))
             if not numero:
                 continue
@@ -249,4 +276,5 @@ def importar(fontes: List[Dict[str, Any]], log=print) -> Dict[str, Any]:
                     for v in vals:
                         con.execute("INSERT INTO entidades (documento_id, pagina, tipo, valor, valor_norm) VALUES (?,?,?,?,?)", (did, i, t, v, norm(v)))
             log(f"  + {numero} ({len(src.get('movimentos') or [])} movimentos)")
+    db.bump()
     return stats

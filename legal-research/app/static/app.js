@@ -2,10 +2,10 @@
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const LIMITE = 30;
-let deslocamento = 0, ultimoTotal = 0, opcoes = {};
+let deslocamento = 0, ultimoTotal = 0, opcoes = {}, itensAtuais = [], ctrl = null, seq = 0, tmBusca = null;
 
-const api = async (url, body, method) => {
-  const r = await fetch(url, { method: method || (body ? 'POST' : 'GET'), headers: { 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
+const api = async (url, body, method, signal) => {
+  const r = await fetch(url, { method: method || (body ? 'POST' : 'GET'), headers: { 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined, signal });
   if (!r.ok) { let m = r.statusText; try { m = (await r.json()).detail || m; } catch (e) {} throw new Error(m); }
   return r.json();
 };
@@ -40,23 +40,34 @@ function montarConsulta() {
   return { filtroGeral: { conteudo: fg }, filtroPesquisaTextual: { conteudo: ft } };
 }
 
+const agendarBusca = (ms = 250) => { clearTimeout(tmBusca); tmBusca = setTimeout(() => buscar(), ms); };
+
 async function buscar(reset = true) {
-  if (reset) deslocamento = 0;
+  if (reset) { deslocamento = 0; itensAtuais = []; }
+  if (ctrl) ctrl.abort();
+  ctrl = new AbortController(); const meu = ++seq;
   const q = montarConsulta();
-  location.hash = encodeURIComponent(JSON.stringify({ q: $('#q').value, c: q }));
-  $('#resultados').innerHTML = '<p class="meta">Buscando…</p>';
+  history.replaceState(null, '', '#' + encodeURIComponent(JSON.stringify({ c: q })));
+  if (reset) $('#resultados').innerHTML = '<div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div>';
+  $('#maisBtn').classList.add('oculto');
   try {
-    const [r, m] = await Promise.all([api(`/api/documento?limite=${LIMITE}&deslocamento=${deslocamento}`, q), api('/api/documento/obterMenuLateral', q)]);
+    const t0 = performance.now();
+    const pr = api(`/api/documento?limite=${LIMITE}&deslocamento=${deslocamento}`, q, null, ctrl.signal);
+    const pm = reset ? api('/api/documento/obterMenuLateral', q, null, ctrl.signal) : null;
+    const r = await pr; if (meu !== seq) return;
     ultimoTotal = r.totalTrechos;
-    $('#contagem').innerHTML = `<b>${r.totalProcessos.toLocaleString('pt-BR')}</b> processos · <b>${r.totalDocumentos.toLocaleString('pt-BR')}</b> documentos · <b>${r.totalTrechos.toLocaleString('pt-BR')}</b> trechos`;
+    itensAtuais = reset ? r.resultados : itensAtuais.concat(r.resultados);
+    $('#contagem').innerHTML = `<b>${r.totalProcessos.toLocaleString('pt-BR')}</b> processos · <b>${r.totalDocumentos.toLocaleString('pt-BR')}</b> documentos · <b>${r.totalTrechos.toLocaleString('pt-BR')}</b> trechos <span class="tempo">${Math.round(performance.now() - t0)} ms${r.cache ? ' · cache' : ''}</span>`;
     $('#juriN').textContent = r.totalProcessos.toLocaleString('pt-BR');
-    renderResultados(r.resultados, $('#resultados'));
-    renderFacetas(m);
-    const pag = Math.floor(deslocamento / LIMITE) + 1, tot = Math.max(1, Math.ceil(ultimoTotal / LIMITE));
-    $('#pagInfo').textContent = `página ${pag} de ${tot}`;
-    $('#prev').disabled = deslocamento === 0; $('#next').disabled = deslocamento + LIMITE >= ultimoTotal;
-  } catch (e) { $('#resultados').innerHTML = `<p class="meta">Erro: ${esc(e.message)}</p>`; }
+    renderResultados(itensAtuais, $('#resultados'));
+    $('#pagInfo').textContent = `${Math.min(itensAtuais.length, ultimoTotal)} de ${ultimoTotal.toLocaleString('pt-BR')} trechos`;
+    $('#maisBtn').classList.toggle('oculto', itensAtuais.length >= ultimoTotal);
+    if (pm) { const m = await pm; if (meu === seq) renderFacetas(m); }
+  } catch (e) { if (e.name !== 'AbortError') $('#resultados').innerHTML = `<p class="meta">Erro: ${esc(e.message)}</p>`; }
 }
+const carregarMais = () => { if (itensAtuais.length >= ultimoTotal || $('#maisBtn').classList.contains('oculto')) return; deslocamento += LIMITE; buscar(false); };
+new IntersectionObserver(es => { if (es[0].isIntersecting) carregarMais(); }).observe($('#sentinela'));
+$('#maisBtn').onclick = carregarMais;
 
 function renderResultados(itens, alvo) {
   if (!itens.length) { alvo.innerHTML = '<p class="meta">Nenhum resultado. Importe dados em "Fontes de dados" ou ajuste os filtros.</p>'; return; }
@@ -74,6 +85,7 @@ function renderResultados(itens, alvo) {
     <div class="trecho">${r.trecho}</div>
   </article>`).join('');
   alvo.dataset.itens = JSON.stringify(itens);
+  // destaque adicional (termos avançados) no lado do cliente
 }
 
 function renderFacetas(m) {
@@ -201,12 +213,25 @@ async function carregarOpcoes() {
 [['f_parte', 'parte'], ['f_advogado', 'advogado'], ['f_magistrado', 'magistrado'], ['f_orgao', 'orgaoJulgador'], ['f_numero', 'processo']].forEach(([id, campo]) => {
   let tm; $('#' + id).addEventListener('input', e => { clearTimeout(tm); tm = setTimeout(async () => { const v = await api(`/api/autocomplete/Trabalhista/${campo}?q=${encodeURIComponent(e.target.value)}`); $('#dl_' + campo).innerHTML = v.map(x => `<option value="${esc(x)}">`).join(''); }, 200); });
 });
-$$('.tab').forEach(b => b.onclick = () => { $$('.tab').forEach(x => x.classList.remove('ativo')); b.classList.add('ativo'); $$('.view').forEach(v => v.classList.add('oculto')); $('#view-' + b.dataset.view).classList.remove('oculto'); if (b.dataset.view === 'favoritos') renderFavoritos(); if (b.dataset.view === 'painel') renderPainel(); if (b.dataset.view === 'fontes') statusFontes(); });
+$$('.tab').forEach(b => b.onclick = () => { $$('.tab').forEach(x => x.classList.remove('ativo')); b.classList.add('ativo'); $$('.view').forEach(v => v.classList.add('oculto')); $('#view-' + b.dataset.view).classList.remove('oculto'); if (b.dataset.view === 'favoritos') renderFavoritos(); if (b.dataset.view === 'painel') renderPainel(); if (b.dataset.view === 'fontes') { statusFontes(); acompanharTarefas(); } });
 $('#formBusca').onsubmit = e => { e.preventDefault(); buscar(); };
-$('#btnAplicar').onclick = () => buscar();
+$('#q').addEventListener('input', () => agendarBusca(300));
+$$('input[name=modo]').forEach(r => r.onchange = () => buscar());
 $('#ordem').onchange = () => buscar();
-$('#prev').onclick = () => { deslocamento = Math.max(0, deslocamento - LIMITE); buscar(false); };
-$('#next').onclick = () => { deslocamento += LIMITE; buscar(false); };
+$$('.filtros input, .filtros select').forEach(el => {
+  el.addEventListener('change', () => agendarBusca(150));
+  if (el.tagName === 'INPUT' && !['checkbox', 'date', 'number'].includes(el.type)) el.addEventListener('input', () => agendarBusca(400));
+});
+document.addEventListener('keydown', e => {
+  if (e.key === '/' && document.activeElement.tagName !== 'INPUT' && document.activeElement.tagName !== 'TEXTAREA') { e.preventDefault(); $('#q').focus(); $('#q').select(); }
+  if (e.key === 'Escape') $('#modal').classList.add('oculto');
+  if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && document.activeElement.tagName !== 'INPUT') {
+    const arts = $$('#resultados .resultado'); if (!arts.length) return; e.preventDefault();
+    let i = arts.findIndex(a => a.classList.contains('foco')); arts.forEach(a => a.classList.remove('foco'));
+    i = e.key === 'ArrowDown' ? Math.min(arts.length - 1, i + 1) : Math.max(0, i - 1); arts[i].classList.add('foco'); arts[i].scrollIntoView({ block: 'nearest' });
+  }
+  if (e.key === 'Enter' && $('#resultados .resultado.foco') && document.activeElement.tagName !== 'INPUT') { const a = $('#resultados .resultado.foco'); const r = itensAtuais.find(x => String(x.pagina_id) === a.dataset.id); if (r) abrirDocumento(r.documento_id, r.pagina); }
+});
 
 async function renderPainel() {
   const [t, uf, vm, dm, pf, pt] = await Promise.all(['total', 'ativosPorUf', 'valorMedioCausas', 'duracaoMedia', 'porFase', 'porTribunal'].map(p => api('/api/home/' + p, {})));
@@ -225,7 +250,32 @@ async function statusFontes() {
   $('#dj_tribunal').innerHTML = s.tribunais.map(t => `<option>${t}</option>`).join('');
   $('#idx_pasta').placeholder = s.pastaDocumentos;
 }
-const run = async (btn, out, fn) => { btn.disabled = true; out.textContent = 'Processando…'; try { out.textContent = JSON.stringify(await fn(), null, 2); carregarOpcoes(); } catch (e) { out.textContent = 'Erro: ' + e.message; } btn.disabled = false; };
+let pollTimer = null;
+async function acompanharTarefas() {
+  clearTimeout(pollTimer);
+  try {
+    const ts = await api('/api/tarefas');
+    const ativas = ts.filter(t => t.status === 'executando');
+    const topo = $('#tarefasTopo');
+    if (ativas.length) {
+      const t = ativas[0]; const pct = t.total ? Math.round(100 * t.feito / t.total) : 0;
+      topo.classList.remove('oculto'); $('#tarefaTxt').textContent = `${t.descricao} — ${t.total ? pct + '%' : t.feito} ${t.mensagem ? '· ' + t.mensagem : ''}`; $('#tarefaProg').style.width = (t.total ? pct : 30) + '%';
+    } else topo.classList.add('oculto');
+    if (!$('#view-fontes').classList.contains('oculto')) {
+      $('#listaTarefas').innerHTML = ts.slice(0, 10).map(t => `<div class="tarefa"><div><div>${esc(t.descricao)} <small>${esc(t.inicio)}</small></div><small>${esc(t.mensagem || '')} ${t.erro ? '· ' + esc(t.erro) : ''}</small>${t.resultado ? `<pre class="saida">${esc(JSON.stringify(t.resultado, null, 1))}</pre>` : ''}</div><div><span class="st ${t.status}">${t.status}</span><div class="barra-prog"><div style="width:${t.total ? Math.round(100 * t.feito / t.total) : (t.status === 'executando' ? 30 : 100)}%"></div></div></div></div>`).join('') || '—';
+    }
+    const versao = (opcoes.versao ?? -1);
+    if (ativas.length) { pollTimer = setTimeout(acompanharTarefas, 1500); if (Date.now() - (window._ultRefresh || 0) > 4000) { window._ultRefresh = Date.now(); carregarOpcoes(); buscar(); } }
+    else if (window._haviaAtivas) { window._haviaAtivas = false; carregarOpcoes(); buscar(); toast('Tarefa concluída — índice atualizado'); }
+    window._haviaAtivas = !!ativas.length;
+  } catch (e) { pollTimer = setTimeout(acompanharTarefas, 5000); }
+}
+const run = async (btn, out, fn) => {
+  btn.disabled = true; out.textContent = 'Iniciando…';
+  try { const j = await fn(); out.textContent = j.id ? `Tarefa ${j.id} iniciada em segundo plano: ${j.descricao}. Acompanhe o progresso acima e na lista de tarefas.` : JSON.stringify(j, null, 2); acompanharTarefas(); }
+  catch (e) { out.textContent = 'Erro: ' + e.message; }
+  btn.disabled = false;
+};
 $('#dj_btnNumeros').onclick = () => run($('#dj_btnNumeros'), $('#dj_outNumeros'), () => api('/api/fontes/datajud/numero', { numeros: $('#dj_numeros').value.split(/\n/).map(s => s.trim()).filter(Boolean) }));
 $('#dj_btnFiltro').onclick = () => run($('#dj_btnFiltro'), $('#dj_outFiltro'), () => api('/api/fontes/datajud/filtro', { tribunal: $('#dj_tribunal').value, classeCodigo: Number($('#dj_classe').value) || null, assuntoCodigo: Number($('#dj_assunto').value) || null, orgaoCodigo: Number($('#dj_orgao').value) || null, grau: $('#dj_grau').value || null, dataInicio: $('#dj_ini').value || null, dataFim: $('#dj_fim').value || null, maximo: Number($('#dj_max').value) || 200 }));
 $('#pp_btn').onclick = () => run($('#pp_btn'), $('#pp_out'), () => api('/api/fontes/pessoa', { provedor: $('#pp_provedor').value, tipo: $('#pp_tipo').value, chave: $('#pp_chave').value }));
@@ -234,7 +284,7 @@ $('#up_btn').onclick = () => run($('#up_btn'), $('#idx_out'), async () => { cons
 
 // -------------------------------------------------------------- início
 (async () => {
-  atualizarFavCount(); await carregarOpcoes(); carregarFiltrosSalvos();
+  atualizarFavCount(); await carregarOpcoes(); carregarFiltrosSalvos(); acompanharTarefas(); setInterval(acompanharTarefas, 8000);
   if (location.hash) { try { const h = JSON.parse(decodeURIComponent(location.hash.slice(1))); if (h.doc) abrirDocumento(h.doc, h.pag); else if (h.c) aplicarConsulta(h.c); } catch (e) {} }
   buscar();
 })();

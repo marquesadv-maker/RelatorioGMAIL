@@ -5,6 +5,8 @@ from contextlib import contextmanager
 
 DB_PATH = os.environ.get("LR_DB", os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "legal_research.db"))
 
+SCHEMA_VERSION = 2
+
 SCHEMA = """
 PRAGMA journal_mode=WAL;
 CREATE TABLE IF NOT EXISTS processos (
@@ -39,7 +41,7 @@ CREATE TABLE IF NOT EXISTS paginas (
     numero INTEGER NOT NULL, texto TEXT NOT NULL
 );
 CREATE VIRTUAL TABLE IF NOT EXISTS paginas_fts USING fts5(
-    texto, content='paginas', content_rowid='id', tokenize='unicode61 remove_diacritics 2'
+    texto, content='paginas', content_rowid='id', tokenize='unicode61 remove_diacritics 2', prefix='2 3 4'
 );
 CREATE TRIGGER IF NOT EXISTS paginas_ai AFTER INSERT ON paginas BEGIN
     INSERT INTO paginas_fts(rowid, texto) VALUES (new.id, new.texto);
@@ -56,25 +58,64 @@ CREATE INDEX IF NOT EXISTS idx_ent_doc ON entidades(documento_id);
 CREATE INDEX IF NOT EXISTS idx_pag_doc ON paginas(documento_id);
 CREATE INDEX IF NOT EXISTS idx_doc_proc ON documentos(processo_id);
 CREATE INDEX IF NOT EXISTS idx_partes_proc ON partes(processo_id);
+CREATE INDEX IF NOT EXISTS idx_partes_nome ON partes(nome COLLATE NOCASE);
+CREATE INDEX IF NOT EXISTS idx_prof_nome ON profissionais(papel, nome COLLATE NOCASE);
+CREATE INDEX IF NOT EXISTS idx_doc_tipo ON documentos(tipo);
+CREATE INDEX IF NOT EXISTS idx_doc_data ON documentos(data_documento);
+CREATE INDEX IF NOT EXISTS idx_proc_trib ON processos(tribunal, uf, status, fase);
 CREATE TABLE IF NOT EXISTS filtros_salvos (
     id INTEGER PRIMARY KEY, nome TEXT NOT NULL, corpo TEXT NOT NULL, criado_em TEXT
 );
 """
 
 
+# Versão do índice: incrementada a cada gravação; invalida o cache de consultas.
+VERSION = 0
+
+
+def bump():
+    global VERSION
+    VERSION += 1
+
+
 def connect() -> sqlite3.Connection:
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
-    con = sqlite3.connect(DB_PATH, check_same_thread=False)
+    con = sqlite3.connect(DB_PATH, check_same_thread=False, timeout=30)
     con.row_factory = sqlite3.Row
     con.execute("PRAGMA foreign_keys=ON")
+    con.execute("PRAGMA synchronous=NORMAL")
+    con.execute("PRAGMA temp_store=MEMORY")
+    con.execute("PRAGMA cache_size=-65536")      # 64 MB de cache de páginas
+    con.execute("PRAGMA mmap_size=268435456")    # 256 MB mapeados em memória
     return con
 
 
 def init_db():
     con = connect()
+    ver = con.execute("PRAGMA user_version").fetchone()[0]
+    if ver and ver != SCHEMA_VERSION:
+        # Esquema antigo: recria o índice (os dados são reimportáveis das fontes).
+        con.close()
+        for suf in ("", "-wal", "-shm"):
+            if os.path.exists(DB_PATH + suf):
+                os.remove(DB_PATH + suf)
+        con = connect()
     con.executescript(SCHEMA)
+    con.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
     con.commit()
     con.close()
+
+
+def optimize():
+    """Compacta o índice FTS após grandes gravações (consultas mais rápidas)."""
+    con = connect()
+    try:
+        con.execute("INSERT INTO paginas_fts(paginas_fts) VALUES('optimize')")
+        con.execute("PRAGMA optimize")
+        con.commit()
+    finally:
+        con.close()
+    bump()
 
 
 @contextmanager

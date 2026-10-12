@@ -24,6 +24,18 @@ Ferramenta de busca textual sobre processos trabalhistas, inspirada no *Legal Re
 2. **Documentos do escritório** — PDFs/DOCX/TXT das pastas dos processos (inteiro teor pesquisável). Coloque um subdiretório por processo em `data/documentos/` (o número CNJ pode estar no nome da pasta, do arquivo ou no texto). Um `processo.json` opcional por pasta informa partes, advogados, valores e situações (ver `docs/processo.exemplo.json`).
 3. **Provedores privados (opcionais)** — Judit ou Escavador, para busca por nome, CPF, CNPJ e OAB. Exigem contrato e chave no `.env`. Os caminhos dos endpoints estão em `app/fontes/privadas.py` e devem ser conferidos na documentação vigente de cada provedor antes do uso em produção.
 
+## Desempenho e dinamismo
+
+- **Índice FTS5 com prefixos** (`prefix='2 3 4'`), `PRAGMA` de cache/mmap e otimização do índice após gravações.
+- **Cache de consultas** em memória (invalidado automaticamente a cada gravação no índice).
+- **Facetas e jurimetria** usam uma única passagem pelo FTS por requisição (tabela temporária de acertos).
+- **Extração de PDF/DOCX em paralelo** (processos), gravação em lote e commits parciais.
+- **DataJud**: consultas por número em paralelo; varredura paginada gravada em lotes conforme chega.
+- **Tarefas em segundo plano** (`/api/tarefas`) com barra de progresso na interface; o índice atualiza sozinho ao concluir.
+- **Interface**: busca enquanto digita (com cancelamento de requisições), filtros aplicados ao mudar, rolagem infinita, atalhos (`/` foca a busca, `Esc` fecha, `↑ ↓ Enter` navegam), tempo de resposta exibido.
+
+Referência medida localmente com 3.000 processos importados: busca ~9 ms no servidor (0,2 ms em cache), facetas ~30 ms, jurimetria ~40 ms.
+
 ## Instalação e execução (localhost)
 
 ```bash
@@ -49,7 +61,8 @@ Abra **http://localhost:8765**. No Windows, `run.bat` faz tudo isso.
 | GET | `/api/documento/{id}` · `/api/documento/{id}/arquivo` · `/api/processo/{id}` | detalhe, arquivo original, capa |
 | POST | `/api/fontes/datajud/numero` · `/api/fontes/datajud/filtro` | importar do DataJud |
 | POST | `/api/fontes/pessoa` | importar de provedor privado |
-| POST | `/api/indexar` · `/api/upload` | indexar pasta / enviar arquivos |
+| POST | `/api/indexar` · `/api/upload` | indexar pasta / enviar arquivos (tarefa em segundo plano) |
+| GET | `/api/tarefas` · `/api/tarefas/{id}` | progresso das tarefas |
 | POST | `/api/home/{total,ativosPorUf,valorMedioCausas,duracaoMedia,porFase,porTribunal}` | painel |
 
 Corpo das buscas: `{"filtroGeral": {"conteudo": {...}}, "filtroPesquisaTextual": {"conteudo": {"trecho": "...", "tiposEntidades": [...], "buscaDocumentosAvancada": {...}, "tipoOrdenacao": "relevancia", "periodoDataDocumento": {...}}}}`.

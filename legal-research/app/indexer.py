@@ -10,8 +10,9 @@ import hashlib
 import json
 import os
 import re
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from . import db
 from .entities import (classify_doc, classify_fase, extract_entities, find_cnj, mask_doc, norm, parse_date, CNPJ_RE, CPF_RE)
@@ -84,28 +85,56 @@ def guess_parties(text: str) -> List[Dict]:
     return uniq
 
 
-def index_folder(root: str, reindex: bool = False, log=print) -> Dict:
+def index_folder(root: str, reindex: bool = False, log=print, progress=None, workers: Optional[int] = None) -> Dict:
+    """Indexa uma pasta. A extração de texto (PDF/DOCX) roda em processos paralelos; a gravação é sequencial."""
     db.init_db()
     stats = {"processos": 0, "documentos": 0, "paginas": 0, "ignorados": 0, "erros": []}
     root = os.path.abspath(root)
     if not os.path.isdir(root):
         raise FileNotFoundError(root)
+    # 1) lista de arquivos e filtro dos já indexados (hash inalterado)
+    pendentes: List[Tuple[str, str, str]] = []   # (path, folder, hash)
     with db.session() as con:
         for folder, _dirs, files in os.walk(root):
-            docs = sorted(f for f in files if os.path.splitext(f)[1].lower() in EXTS)
-            if not docs:
-                continue
-            meta = load_meta(folder)
-            for f in docs:
+            for f in sorted(files):
+                if os.path.splitext(f)[1].lower() not in EXTS:
+                    continue
                 path = os.path.join(folder, f)
-                try:
-                    n = _index_file(con, path, folder, meta, reindex, stats)
-                    if n:
-                        log(f"  + {f} ({n} págs.)")
-                except Exception as e:  # noqa
-                    stats["erros"].append(f"{path}: {e}")
-                    log(f"  ! erro em {f}: {e}")
+                h = file_hash(path)
+                ex = con.execute("SELECT hash FROM documentos WHERE caminho=?", (path,)).fetchone()
+                if ex and ex["hash"] == h and not reindex:
+                    stats["ignorados"] += 1
+                else:
+                    pendentes.append((path, folder, h))
+    total = len(pendentes)
+    if progress:
+        progress(0, total, f"{total} arquivo(s) para extrair")
+    if not pendentes:
+        return stats
+    metas: Dict[str, Dict] = {}
+    # 2) extração paralela
+    nw = workers or max(1, min(8, (os.cpu_count() or 2)))
+    feito = 0
+    with db.session() as con, ProcessPoolExecutor(max_workers=nw) as pool:
+        futs = {pool.submit(extract_pages, path): (path, folder, h) for path, folder, h in pendentes}
+        for fut in as_completed(futs):
+            path, folder, h = futs[fut]
+            feito += 1
+            try:
+                pages = fut.result()
+                if folder not in metas:
+                    metas[folder] = load_meta(folder)
+                n = _index_file(con, path, folder, metas[folder], stats, pages, h)
+                log(f"  + {os.path.basename(path)} ({n} págs.)")
+            except Exception as e:  # noqa
+                stats["erros"].append(f"{path}: {e}")
+                log(f"  ! erro em {os.path.basename(path)}: {e}")
+            if progress:
+                progress(feito, total, os.path.basename(path))
+            if feito % 50 == 0:
+                con.commit()
         stats["processos"] = con.execute("SELECT COUNT(*) FROM processos").fetchone()[0]
+    db.optimize()
     return stats
 
 
@@ -157,13 +186,8 @@ def _upsert_processo(con, numero: str, meta: Dict, folder: str, text: str) -> in
     return pid
 
 
-def _index_file(con, path: str, folder: str, meta: Dict, reindex: bool, stats: Dict) -> int:
-    h = file_hash(path)
-    existing = con.execute("SELECT id, hash FROM documentos WHERE caminho=?", (path,)).fetchone()
-    if existing and existing["hash"] == h and not reindex:
-        stats["ignorados"] += 1
-        return 0
-    pages = extract_pages(path)
+def _index_file(con, path: str, folder: str, meta: Dict, stats: Dict, pages: List[str], h: str) -> int:
+    existing = con.execute("SELECT id FROM documentos WHERE caminho=?", (path,)).fetchone()
     full = "\n".join(pages)
     numero = guess_number(folder, os.path.basename(path), full) or meta.get("numero")
     if not numero:
@@ -179,13 +203,14 @@ def _index_file(con, path: str, folder: str, meta: Dict, reindex: bool, stats: D
         "INSERT INTO documentos (processo_id, arquivo, caminho, tipo, data_documento, fase, paginas, tamanho, hash, indexado_em) VALUES (?,?,?,?,?,?,?,?,?,?)",
         (pid, fname, path, tipo, data_doc, fase, len(pages), os.path.getsize(path), h, datetime.now().isoformat(timespec="seconds")))
     did = cur.lastrowid
+    linhas_pag, linhas_ent = [], []
     for i, txt in enumerate(pages, start=1):
         # LGPD: CPF mascarado no índice (o original permanece apenas no arquivo)
-        txt_idx = CPF_RE.sub(lambda m: mask_doc(m.group(0)), txt)
-        con.execute("INSERT INTO paginas (documento_id, numero, texto) VALUES (?,?,?)", (did, i, txt_idx))
+        linhas_pag.append((did, i, CPF_RE.sub(lambda m: mask_doc(m.group(0)), txt)))
         for tipo_ent, valores in extract_entities(txt).items():
-            for v in valores:
-                con.execute("INSERT INTO entidades (documento_id, pagina, tipo, valor, valor_norm) VALUES (?,?,?,?,?)", (did, i, tipo_ent, v, norm(v)))
+            linhas_ent.extend((did, i, tipo_ent, v, norm(v)) for v in valores)
+    con.executemany("INSERT INTO paginas (documento_id, numero, texto) VALUES (?,?,?)", linhas_pag)
+    con.executemany("INSERT INTO entidades (documento_id, pagina, tipo, valor, valor_norm) VALUES (?,?,?,?,?)", linhas_ent)
     # advogados extraídos do texto viram profissionais do processo se não vieram dos metadados
     if not meta.get("advogados"):
         for r in con.execute("SELECT DISTINCT valor FROM entidades WHERE documento_id=? AND tipo='advogados'", (did,)):

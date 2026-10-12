@@ -180,4 +180,5 @@ def importar(itens: List[Dict[str, Any]]) -> Dict[str, Any]:
                 for t, vals in extract_entities(texto).items():
                     for v in vals:
                         con.execute("INSERT INTO entidades (documento_id, pagina, tipo, valor, valor_norm) VALUES (?,?,?,?,?)", (did, 1, t, v, norm(v)))
+    db.bump()
     return stats

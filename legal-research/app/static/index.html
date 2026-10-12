@@ -16,6 +16,7 @@
     <button class="tab" data-view="painel">Painel</button>
   </nav>
   <div class="esfera">Esfera: <strong>Trabalhista</strong> · <span id="totalBase">—</span></div>
+  <div id="tarefasTopo" class="tarefas-topo oculto"><span id="tarefaTxt"></span><div class="barra-prog"><div id="tarefaProg"></div></div></div>
 </header>
 
 <main id="view-busca" class="view">
@@ -111,7 +112,7 @@
         <label><input type="checkbox" class="flag" value="revelia">Revelia</label>
       </div>
     </details>
-    <button id="btnAplicar" class="primario largo">Aplicar filtros</button>
+    <small class="dica">Os filtros são aplicados automaticamente ao mudar.</small>
   </aside>
 
   <section class="conteudo">
@@ -137,7 +138,7 @@
     </div>
     <div id="facetas" class="facetas"></div>
     <div id="resultados" class="resultados"></div>
-    <div class="paginacao"><button id="prev" class="secundario">‹ Anterior</button><span id="pagInfo"></span><button id="next" class="secundario">Próxima ›</button></div>
+    <div class="paginacao"><span id="pagInfo"></span><button id="maisBtn" class="secundario oculto">Carregar mais</button><div id="sentinela"></div></div>
   </section>
 </main>
 
@@ -149,6 +150,7 @@
   <section class="conteudo largo">
     <h2>Fontes de dados reais</h2>
     <div id="statusFontes" class="cartao"></div>
+    <div class="cartao"><h3>Tarefas em andamento</h3><div id="listaTarefas">—</div></div>
 
     <div class="cartao">
       <h3>DataJud (CNJ) — por número de processo</h3>
@@ -202,6 +204,7 @@
   </section>
 </main>
 
+<div id="atalhos" class="atalhos">/ busca · Esc fecha · ↑↓ navega</div>
 <main id="view-painel" class="view oculto">
   <section class="conteudo largo"><h2>Painel</h2><div id="painel" class="grade-cartoes"></div></section>
 </main>
