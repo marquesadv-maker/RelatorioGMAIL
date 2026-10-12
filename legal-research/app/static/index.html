@@ -4,11 +4,12 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Legal Research Local</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Quicksand:wght@400;500;600;700&family=Playfair+Display:ital@1&display=swap">
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
 <header class="topo">
-  <div class="marca">⚖️ Legal Research <span>Local</span></div>
+  <div class="marca"><img src="/static/logo-m-branco.png" alt="Marques Advogados" class="logo"> Legal Research <span>Marques</span></div>
   <nav>
     <button class="tab ativo" data-view="busca">Busca</button>
     <button class="tab" data-view="favoritos">Favoritos <span id="favCount" class="badge">0</span></button>
@@ -121,9 +122,15 @@
         <label><input type="radio" name="modo" value="normal" checked> Normal</label>
         <label><input type="radio" name="modo" value="ia"> I.A. (sinônimos)</label>
       </div>
-      <input id="q" placeholder='Pesquise nos documentos… use "aspas" para frase exata' autofocus>
+      <input id="q" placeholder='Nome da parte, advogado ou termo… use "aspas" para frase exata' autofocus>
       <button class="primario" type="submit">Buscar</button>
     </form>
+    <div class="online">
+      <label class="chk"><input type="checkbox" id="online" checked> Buscar também no <b>DJEN (CNJ)</b> quando a base local não tiver resultado</label>
+      <select id="onlineCampo"><option value="parte">como nome de parte</option><option value="advogado">como nome de advogado</option></select>
+      <button id="btnOnline" class="secundario">Buscar no DJEN agora</button>
+      <span id="onlineStatus" class="tempo"></span>
+    </div>
     <div class="resumo">
       <div id="contagem">—</div>
       <div class="acoes">
@@ -151,6 +158,26 @@
     <h2>Fontes de dados reais</h2>
     <div id="statusFontes" class="cartao"></div>
     <div class="cartao"><h3>Tarefas em andamento</h3><div id="listaTarefas">—</div></div>
+
+    <div class="cartao destaque">
+      <h3>DJEN / Comunica PJe (CNJ) — por nome de parte, advogado, OAB ou processo</h3>
+      <p>Publicações oficiais (intimações, despachos, sentenças, editais) com nomes das partes, advogados e texto integral. Fonte pública e gratuita: <a href="https://www.cnj.jus.br/programas-e-acoes/processo-judicial-eletronico-pje/comunicacoes-processuais/" target="_blank" rel="noopener">CNJ, Comunicações Processuais</a>. É a fonte usada pela busca por nome na tela principal.</p>
+      <div class="grade">
+        <label>Nome da parte <input id="dj2_parte"></label>
+        <label>Nome do advogado <input id="dj2_adv"></label>
+        <label>OAB (número) <input id="dj2_oab"></label>
+        <label>OAB (UF) <input id="dj2_uf" maxlength="2" placeholder="SP"></label>
+        <label>Nº do processo <input id="dj2_num"></label>
+        <label>Tribunal <select id="dj2_trib"><option value="">Todos os trabalhistas</option></select></label>
+        <label>Disponibilizado de <input type="date" id="dj2_ini"></label>
+        <label>até <input type="date" id="dj2_fim"></label>
+        <label>Meio <select id="dj2_meio"><option value="">Diário e editais</option><option value="D">Diário Eletrônico</option><option value="E">Plataforma de Editais</option></select></label>
+        <label>Máximo de publicações <input type="number" id="dj2_max" value="300" min="1" max="10000"></label>
+      </div>
+      <label class="chk"><input type="checkbox" id="dj2_trab" checked> Somente Justiça do Trabalho (TRT e TST)</label>
+      <button id="dj2_btn" class="primario">Importar do DJEN</button>
+      <pre id="dj2_out" class="saida"></pre>
+    </div>
 
     <div class="cartao">
       <h3>DataJud (CNJ) — por número de processo</h3>

@@ -17,6 +17,10 @@ Ferramenta de busca textual sobre processos trabalhistas, inspirada no *Legal Re
 
 ## Fontes de dados reais
 
+0. **DJEN / Comunica PJe (CNJ)**, público e gratuito, sem chave. Publicações oficiais (intimações, despachos, sentenças, editais) com **nomes das partes, advogados e texto integral**. É a fonte da busca por nome na tela principal: ao pesquisar um nome sem resultado local, o sistema consulta o DJEN, importa as publicações e exibe os trechos.
+   - Portal: https://www.cnj.jus.br/programas-e-acoes/processo-judicial-eletronico-pje/comunicacoes-processuais/
+   - Swagger: https://comunicaapi.pje.jus.br/swagger/index.html
+   - Limites: controle por IP (HTTP 429 → o conector aguarda 1 minuto), até 10.000 resultados por pesquisa.
 1. **DataJud (CNJ)** — API Pública, gratuita. Traz classe, assuntos, órgão julgador, grau e movimentações de qualquer processo trabalhista (TRT-1 a TRT-24 e TST). Não traz partes, advogados, valores nem inteiro teor, e omite processos sigilosos.
    - Documentação: https://datajud-wiki.cnj.jus.br/api-publica/
    - Chave pública (rotativa): https://datajud-wiki.cnj.jus.br/api-publica/acesso/ → copie para `DATAJUD_API_KEY` no `.env`.
@@ -60,12 +64,17 @@ Abra **http://localhost:8765**. No Windows, `run.bat` faz tudo isso.
 | GET | `/api/autocomplete/Trabalhista/{parte,advogado,magistrado,orgaoJulgador,processo,...}` | sugestões |
 | GET | `/api/documento/{id}` · `/api/documento/{id}/arquivo` · `/api/processo/{id}` | detalhe, arquivo original, capa |
 | POST | `/api/fontes/datajud/numero` · `/api/fontes/datajud/filtro` | importar do DataJud |
+| POST | `/api/fontes/djen` · `/api/busca-online` | importar publicações do DJEN (segundo plano / síncrono) |
 | POST | `/api/fontes/pessoa` | importar de provedor privado |
 | POST | `/api/indexar` · `/api/upload` | indexar pasta / enviar arquivos (tarefa em segundo plano) |
 | GET | `/api/tarefas` · `/api/tarefas/{id}` | progresso das tarefas |
 | POST | `/api/home/{total,ativosPorUf,valorMedioCausas,duracaoMedia,porFase,porTribunal}` | painel |
 
 Corpo das buscas: `{"filtroGeral": {"conteudo": {...}}, "filtroPesquisaTextual": {"conteudo": {"trecho": "...", "tiposEntidades": [...], "buscaDocumentosAvancada": {...}, "tipoOrdenacao": "relevancia", "periodoDataDocumento": {...}}}}`.
+
+## Identidade visual
+
+Interface com a identidade da Marques Advogados: azul-marinho `#0C0E34`, dourado `#8C5818`, areia `#D9C6A3`, creme `#F2E5BD`, fundo nude `#F8F3ED`, fonte Quicksand (equivalente legível à Galano Grotesque do manual) e símbolo "M" no cabeçalho. Tokens em `app/static/style.css`.
 
 ## LGPD e sigilo
 

@@ -22,7 +22,7 @@ from pydantic import BaseModel
 
 from . import config  # noqa: F401  (carrega .env)
 from . import db, jobs
-from .fontes import datajud, privadas
+from .fontes import datajud, djen, privadas
 from .indexer import index_folder
 from .query import ENT_TIPOS, ORDER, build_fts, doc_where, entity_where, process_where
 
@@ -465,8 +465,59 @@ def datajud_filtro(body: ImportFiltro):
 
 @app.get("/api/fontes/status")
 def fontes_status():
-    return {"datajud": bool(os.environ.get("DATAJUD_API_KEY")), **privadas.disponiveis(),
-            "pastaDocumentos": DOCS_ROOT, "tribunais": list(datajud.ALIASES_TRABALHISTA)}
+    return {"datajud": bool(os.environ.get("DATAJUD_API_KEY")), "djen": True, **privadas.disponiveis(),
+            "pastaDocumentos": DOCS_ROOT, "tribunais": list(datajud.ALIASES_TRABALHISTA), "tribunaisDjen": djen.TRIBUNAIS_TRABALHISTAS}
+
+
+class ImportDjen(BaseModel):
+    nomeParte: str = ""
+    nomeAdvogado: str = ""
+    numeroOab: str = ""
+    ufOab: str = ""
+    numeroProcesso: str = ""
+    tribunal: str = ""
+    dataInicio: str = ""
+    dataFim: str = ""
+    meio: str = ""
+    maximo: int = 200
+    somenteTrabalhista: bool = True
+
+
+def _djen_iter(b: ImportDjen, maximo: int):
+    return djen.buscar(b.nomeParte, b.nomeAdvogado, b.numeroOab, b.ufOab, b.numeroProcesso, b.tribunal, b.dataInicio, b.dataFim,
+                       b.meio, maximo=maximo, somente_trabalhista=b.somenteTrabalhista)
+
+
+@app.post("/api/fontes/djen")
+def fonte_djen(body: ImportDjen):
+    """Importa publicações do DJEN (CNJ) em segundo plano, por nome de parte, advogado, OAB ou número."""
+    try:
+        it = _djen_iter(body, min(body.maximo, 10000))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    desc = body.nomeParte or body.nomeAdvogado or (body.numeroOab and f"OAB {body.ufOab} {body.numeroOab}") or body.numeroProcesso
+    return jobs.iniciar("djen", lambda pr: djen.importar(it, progress=pr, total=min(body.maximo, 10000)), f"DJEN: {desc}")
+
+
+class BuscaOnline(BaseModel):
+    termo: str
+    campo: str = "parte"   # parte | advogado
+    maximo: int = 100
+
+
+@app.post("/api/busca-online")
+def busca_online(body: BuscaOnline):
+    """Busca síncrona no DJEN pelo termo digitado (nome de parte ou advogado), grava e devolve contagens.
+    Usada pela interface quando a base local não tem resultados: o usuário vê publicações reais na hora."""
+    termo = body.termo.strip().strip('"')
+    if len(termo) < 4:
+        raise HTTPException(400, "informe ao menos 4 caracteres")
+    try:
+        it = djen.buscar(nome_parte=termo if body.campo == "parte" else "", nome_advogado=termo if body.campo == "advogado" else "", maximo=min(body.maximo, 300))
+        stats = djen.importar(it)
+    except (RuntimeError, ValueError) as e:
+        raise HTTPException(502, str(e))
+    return stats
 
 
 class ImportPessoa(BaseModel):

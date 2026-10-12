@@ -1,8 +1,6 @@
 """Testes com uma resposta no formato documentado do DataJud (estrutura real; conteúdo de exemplo)."""
 import os, sys, tempfile, json
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-os.environ["LR_DB"] = os.path.join(tempfile.mkdtemp(), "t.db")
-os.environ["DATAJUD_API_KEY"] = "teste"
 
 from app import db
 from app.fontes import datajud

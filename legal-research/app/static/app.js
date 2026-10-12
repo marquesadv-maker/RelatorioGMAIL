@@ -63,8 +63,27 @@ async function buscar(reset = true) {
     $('#pagInfo').textContent = `${Math.min(itensAtuais.length, ultimoTotal)} de ${ultimoTotal.toLocaleString('pt-BR')} trechos`;
     $('#maisBtn').classList.toggle('oculto', itensAtuais.length >= ultimoTotal);
     if (pm) { const m = await pm; if (meu === seq) renderFacetas(m); }
+    if (reset && r.totalTrechos === 0 && $('#online').checked) buscarOnline(meu);
   } catch (e) { if (e.name !== 'AbortError') $('#resultados').innerHTML = `<p class="meta">Erro: ${esc(e.message)}</p>`; }
 }
+
+let onlineFeito = new Set();
+async function buscarOnline(meu, forcar = false) {
+  const termo = $('#q').value.trim().replace(/"/g, ''); const campo = $('#onlineCampo').value; const chave = campo + ':' + termo.toLowerCase();
+  if (termo.length < 4) { if (forcar) $('#onlineStatus').textContent = 'Digite ao menos 4 letras do nome.'; return; }
+  if (onlineFeito.has(chave) && !forcar) { $('#onlineStatus').textContent = 'DJEN já consultado para este nome: nenhuma publicação na Justiça do Trabalho.'; return; }
+  $('#onlineStatus').textContent = 'Consultando o DJEN (CNJ)…'; $('#btnOnline').disabled = true;
+  $('#resultados').innerHTML = '<p class="meta">Nenhum resultado na base local. Consultando publicações oficiais no DJEN (CNJ)…</p><div class="skeleton"></div><div class="skeleton"></div>';
+  try {
+    const r = await api('/api/busca-online', { termo, campo });
+    onlineFeito.add(chave);
+    $('#onlineStatus').textContent = `DJEN: ${r.publicacoes} publicação(ões) nova(s) em ${r.processos + r.atualizados} processo(s)`;
+    if (r.publicacoes > 0 || r.atualizados > 0) { await carregarOpcoes(); if (meu === undefined || meu === seq) buscar(); toast(`${r.publicacoes} publicação(ões) importadas do DJEN`); }
+    else $('#resultados').innerHTML = '<p class="meta">Nenhuma publicação encontrada no DJEN para este nome na Justiça do Trabalho. Tente "como nome de advogado", outra grafia, ou desmarque "Somente Justiça do Trabalho" em Fontes de dados.</p>';
+  } catch (e) { $('#onlineStatus').textContent = 'DJEN: ' + e.message; $('#resultados').innerHTML = `<p class="meta">Nenhum resultado na base local. Busca online indisponível: ${esc(e.message)}</p>`; }
+  $('#btnOnline').disabled = false;
+}
+$('#btnOnline').onclick = () => buscarOnline(undefined, true);
 const carregarMais = () => { if (itensAtuais.length >= ultimoTotal || $('#maisBtn').classList.contains('oculto')) return; deslocamento += LIMITE; buscar(false); };
 new IntersectionObserver(es => { if (es[0].isIntersecting) carregarMais(); }).observe($('#sentinela'));
 $('#maisBtn').onclick = carregarMais;
@@ -244,10 +263,12 @@ async function renderPainel() {
 // -------------------------------------------------------------- fontes de dados reais
 async function statusFontes() {
   const s = await api('/api/fontes/status');
-  $('#statusFontes').innerHTML = `<b>DataJud (CNJ):</b> ${s.datajud ? '✅ chave configurada' : '⚠️ DATAJUD_API_KEY ausente no .env — copie a chave pública em <a href="https://datajud-wiki.cnj.jus.br/api-publica/acesso/" target="_blank">datajud-wiki.cnj.jus.br/api-publica/acesso</a>'}<br>
+  $('#statusFontes').innerHTML = `<b>DJEN / Comunica PJe (CNJ):</b> ✅ público, sem chave (busca por nome de parte e advogado)<br>
+    <b>DataJud (CNJ):</b> ${s.datajud ? '✅ chave configurada' : '⚠️ DATAJUD_API_KEY ausente no .env — copie a chave pública em <a href="https://datajud-wiki.cnj.jus.br/api-publica/acesso/" target="_blank">datajud-wiki.cnj.jus.br/api-publica/acesso</a>'}<br>
     <b>Judit:</b> ${s.judit ? '✅ configurado' : '— não configurado'} &nbsp; <b>Escavador:</b> ${s.escavador ? '✅ configurado' : '— não configurado'}<br>
     <b>Pasta de documentos:</b> <code>${esc(s.pastaDocumentos)}</code>`;
   $('#dj_tribunal').innerHTML = s.tribunais.map(t => `<option>${t}</option>`).join('');
+  $('#dj2_trib').innerHTML = '<option value="">Todos os trabalhistas</option>' + (s.tribunaisDjen || []).map(t => `<option>${t}</option>`).join('');
   $('#idx_pasta').placeholder = s.pastaDocumentos;
 }
 let pollTimer = null;
@@ -278,6 +299,7 @@ const run = async (btn, out, fn) => {
 };
 $('#dj_btnNumeros').onclick = () => run($('#dj_btnNumeros'), $('#dj_outNumeros'), () => api('/api/fontes/datajud/numero', { numeros: $('#dj_numeros').value.split(/\n/).map(s => s.trim()).filter(Boolean) }));
 $('#dj_btnFiltro').onclick = () => run($('#dj_btnFiltro'), $('#dj_outFiltro'), () => api('/api/fontes/datajud/filtro', { tribunal: $('#dj_tribunal').value, classeCodigo: Number($('#dj_classe').value) || null, assuntoCodigo: Number($('#dj_assunto').value) || null, orgaoCodigo: Number($('#dj_orgao').value) || null, grau: $('#dj_grau').value || null, dataInicio: $('#dj_ini').value || null, dataFim: $('#dj_fim').value || null, maximo: Number($('#dj_max').value) || 200 }));
+$('#dj2_btn').onclick = () => run($('#dj2_btn'), $('#dj2_out'), () => api('/api/fontes/djen', { nomeParte: $('#dj2_parte').value, nomeAdvogado: $('#dj2_adv').value, numeroOab: $('#dj2_oab').value, ufOab: $('#dj2_uf').value, numeroProcesso: $('#dj2_num').value, tribunal: $('#dj2_trib').value, dataInicio: $('#dj2_ini').value, dataFim: $('#dj2_fim').value, meio: $('#dj2_meio').value, maximo: Number($('#dj2_max').value) || 300, somenteTrabalhista: $('#dj2_trab').checked }));
 $('#pp_btn').onclick = () => run($('#pp_btn'), $('#pp_out'), () => api('/api/fontes/pessoa', { provedor: $('#pp_provedor').value, tipo: $('#pp_tipo').value, chave: $('#pp_chave').value }));
 $('#idx_btn').onclick = () => run($('#idx_btn'), $('#idx_out'), () => api('/api/indexar', { pasta: $('#idx_pasta').value || $('#idx_pasta').placeholder, reindexar: $('#idx_reindex').checked }));
 $('#up_btn').onclick = () => run($('#up_btn'), $('#idx_out'), async () => { const fd = new FormData(); [...$('#up_files').files].forEach(f => fd.append('arquivos', f)); const n = $('#up_numero').value.trim(); const r = await fetch('/api/upload' + (n ? '?numeroProcesso=' + encodeURIComponent(n) : ''), { method: 'POST', body: fd }); if (!r.ok) throw new Error(await r.text()); return r.json(); });
