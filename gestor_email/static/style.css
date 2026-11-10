@@ -312,3 +312,50 @@ table.rules th{color:var(--text2);font-weight:500}
 #mp-ia-result{margin-top:10px;padding:10px 12px;border-radius:8px;background:#fff8e1;font-size:13px}
 .ph{background:#fff3b0;border-radius:2px;color:#5f4300}
 @media (max-width:760px){.mp-campos{grid-template-columns:1fr}}
+
+/* ─── Visual mais limpo ────────────────────────────────────────────────── */
+/* Controles aparecem só ao passar o mouse (ou quando ativos) */
+.row-t{min-height:48px;border-bottom:1px solid #f4f5f6}
+.row-t .star,.row-t .imp,.row-t .cell input{opacity:0;transition:opacity .12s}
+.row-t:hover .star,.row-t:hover .imp,.row-t:hover .cell input,
+.row-t .star.on,.row-t .imp.on,.row-t.selected .cell input,.row-t .cell input:checked{opacity:1}
+.row-t .gm{margin-left:6px}
+.row-t .gm .ms{color:#b3261e}
+.row-t .snip{color:#80868b}
+.row-t.hl{background:#fff;box-shadow:inset 3px 0 0 #d93025}
+.row-t.hl:hover{box-shadow:inset 3px 0 0 #d93025,0 1px 2px 0 rgba(60,64,67,.3),0 1px 3px 1px rgba(60,64,67,.15)}
+.row-t .chip{height:20px;line-height:18px;font-size:11px}
+.row-t .chip.mais-n{background:transparent;color:#80868b;border:0;padding:0 2px}
+.chip.spam{background:#fff4e5;color:#8a4b00;border:1px solid #f3d9a4}
+.chip.notif{border:0}
+
+/* Cabeçalhos de seção discretos */
+.sec-head{padding:10px 16px 4px 20px;font-size:11px;font-weight:500;letter-spacing:.06em;text-transform:uppercase;color:#5f6368;background:#fff;border-bottom:0}
+.sec-head.hl{color:#8c1d18}
+.sec-head .n{font-size:11px}
+
+/* Topo: menos itens visíveis */
+.search-mode,.search #btn-clear-search{display:none}
+.search:focus-within .search-mode{display:flex}
+.search input:not(:placeholder-shown) ~ #btn-clear-search{display:inline-grid}
+.search:focus-within #btn-clear-search{display:none}
+.search:focus-within input:not(:placeholder-shown) ~ #btn-clear-search{display:inline-grid}
+.filter-unread{display:none}
+.hint{display:none}
+.local-note{opacity:.55}
+
+/* Menu lateral enxuto */
+.folders li.mais{color:var(--muted);height:28px;font-size:13px}
+.folders li.mais:hover{color:var(--text)}
+.folders li{height:34px}
+
+/* Filtros rápidos mais leves */
+.tabs-inbox{padding:2px 16px 10px;border-bottom:0}
+.filter-chip{height:30px;border-color:#dadce0;font-weight:400;font-size:13px}
+.filter-chip.on{border-color:transparent}
+
+/* Aviso de spam resgatado (leitura) */
+.spam-banner{display:flex;gap:12px;align-items:center;margin:4px 24px 8px 72px;padding:10px 14px;border-radius:12px;background:#fff4e5;color:#5d3a00;font-size:13px}
+.spam-banner .ms{color:#c26a00;flex-shrink:0}
+.spam-banner .btn{margin-left:auto;flex-shrink:0;height:32px;padding:0 14px;color:#5d3a00;border-color:#d9a050;background:transparent}
+@media (max-width:760px){.spam-banner{margin-left:16px;margin-right:16px;flex-wrap:wrap}}

@@ -16,7 +16,7 @@ from typing import Any, Dict, Iterable, List, Optional
 
 from googleapiclient.errors import HttpError
 
-from . import auth, config, db, gmail_ops
+from . import auth, config, db, gmail_ops, triagem
 
 log = logging.getLogger("gestor_email.sync")
 
@@ -90,9 +90,10 @@ def apply_rule_to_existing(account: str, rule_id: int) -> int:
 
 # ─── Notificações ─────────────────────────────────────────────────────────────
 
-def _register_notification(account: str, m: Dict[str, Any]):
+def _register_notification(account: str, m: Dict[str, Any], valor_triagem: Optional[str] = None):
     labels = m.get("label_ids") or []
-    if "INBOX" not in labels or "SENT" in labels:
+    na_caixa = "INBOX" in labels or (valor_triagem or "").startswith("resgatado")
+    if not na_caixa or "SENT" in labels or valor_triagem == "anuncio":
         return
     db.execute(
         "INSERT OR IGNORE INTO notifications (account, message_id, thread_id, from_name, subject) "
@@ -107,10 +108,13 @@ def _store(service, account: str, raw_msgs: List[Dict[str, Any]], notify: bool, 
     new_msgs = []
     for raw in raw_msgs:
         m = gmail_ops.parse_metadata(raw)
-        if db.upsert_message(account, m):
-            new_msgs.append(m)
+        novo = db.upsert_message(account, m)
+        valor = triagem.aplicar(account, m)  # resgate do spam / anúncios
+        if novo:
+            if valor != "anuncio":
+                new_msgs.append(m)
             if notify:
-                _register_notification(account, m)
+                _register_notification(account, m, valor)
     if rules and new_msgs:
         apply_rules(service, account, new_msgs)
     return len(new_msgs)
@@ -138,6 +142,20 @@ def full_sync(service, account: str) -> int:
         if not page:
             break
 
+    # Spam: busca à parte, pois a listagem padrão não o inclui. Só o que passar
+    # na triagem (cliente conhecido ou notificação) aparece na caixa de entrada.
+    page = None
+    while len(ids) < config.SYNC_MAX_MESSAGES:
+        params = {"userId": "me", "labelIds": ["SPAM"], "q": f"newer_than:{config.SYNC_DAYS}d", "maxResults": 200}
+        if page:
+            params["pageToken"] = page
+        resp = service.users().messages().list(**params).execute()
+        ids.extend(m["id"] for m in resp.get("messages", []))
+        page = resp.get("nextPageToken")
+        if not page:
+            break
+    ids = list(dict.fromkeys(ids))
+
     # Só busca o que ainda não está no cache, mas atualiza etiquetas de todos
     # na incremental; aqui basta trazer os ausentes.
     missing_local = [i for i in ids if not db.message_exists(account, i)]
@@ -145,6 +163,7 @@ def full_sync(service, account: str) -> int:
     # Na primeira carga não gera notificações nem aplica regras retroativamente.
     first_load = db.account_state(account) is None or not db.account_state(account).get("history_id")
     n = _store(service, account, found, notify=not first_load, rules=not first_load)
+    triagem.revisar_spam(account)  # com tudo no cache, o remetente conhecido já é reconhecido
     db.set_account_state(account, history_id=history_id, last_sync=_now(), last_error=None)
     return n
 
@@ -181,6 +200,7 @@ def incremental_sync(service, account: str, start_history_id: str) -> int:
         db.delete_message(account, mid)
     # Filtra spam/lixeira do cache (não aparecem nas listas, mas mantém coerência)
     n = _store(service, account, found, notify=True, rules=True)
+    triagem.revisar_spam(account)
     db.set_account_state(account, history_id=latest, last_sync=_now(), last_error=None)
     return n
 

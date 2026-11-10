@@ -20,7 +20,8 @@ from googleapiclient.http import MediaIoBaseUpload
 
 from . import config, db
 
-METADATA_HEADERS = ["From", "To", "Cc", "Subject", "Date", "Message-ID", "References", "In-Reply-To"]
+METADATA_HEADERS = ["From", "To", "Cc", "Subject", "Date", "Message-ID", "References", "In-Reply-To",
+                    "List-Unsubscribe", "Precedence"]
 
 
 # ─── Utilidades ───────────────────────────────────────────────────────────────
@@ -84,6 +85,8 @@ def parse_metadata(msg: Dict[str, Any]) -> Dict[str, Any]:
         "message_id_header": h.get("message-id", ""),
         "references_header": (h.get("references", "") + " " + h.get("in-reply-to", "")).strip(),
         "has_attachments": _has_attachment(payload),
+        # Mala direta: cabeçalhos típicos de newsletters e anúncios
+        "bulk": bool(h.get("list-unsubscribe")) or h.get("precedence", "").lower() in ("bulk", "list", "junk"),
     }
 
 
@@ -230,6 +233,20 @@ def add_message_labels(service, account: str, message_id: str, add: Iterable[str
     ).execute()
     if "labelIds" in resp:
         db.update_message_labels(account, message_id, resp["labelIds"])
+
+
+def mover_para_caixa(service, account: str, thread_id: str) -> None:
+    """Tira a conversa do spam e a devolve à caixa de entrada no Gmail.
+
+    Só é chamada por ação explícita do usuário ("Não é spam"); as demais
+    funções deste módulo nunca mexem em INBOX/SPAM.
+    """
+    resp = service.users().threads().modify(
+        userId="me", id=thread_id, body={"addLabelIds": ["INBOX"], "removeLabelIds": ["SPAM"]}
+    ).execute()
+    for m in resp.get("messages", []) or []:
+        if "labelIds" in m:
+            db.update_message_labels(account, m["id"], m["labelIds"])
 
 
 # ─── Remetentes e assinaturas ─────────────────────────────────────────────────

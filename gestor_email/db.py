@@ -40,6 +40,9 @@ CREATE TABLE IF NOT EXISTS messages (
     message_id_header TEXT,
     references_header TEXT,
     has_attachments INTEGER NOT NULL DEFAULT 0,
+    bulk          INTEGER NOT NULL DEFAULT 0,
+    triagem       TEXT,
+    triagem_v     INTEGER NOT NULL DEFAULT 0,
     body_json     TEXT,
     tipo          TEXT,
     subtipo       TEXT,
@@ -102,6 +105,13 @@ CREATE TABLE IF NOT EXISTS rule_applied (
     PRIMARY KEY (rule_id, account, message_id)
 );
 
+CREATE TABLE IF NOT EXISTS triagem_manual (
+    account    TEXT NOT NULL,
+    thread_id  TEXT NOT NULL,
+    valor      TEXT NOT NULL CHECK (valor IN ('inbox','anuncio')),
+    PRIMARY KEY (account, thread_id)
+);
+
 CREATE TABLE IF NOT EXISTS settings (
     key   TEXT PRIMARY KEY,
     value TEXT
@@ -131,9 +141,12 @@ def _connect() -> sqlite3.Connection:
             conn.executescript(SCHEMA)
             # Migração de bancos criados antes do contador de notificações
             cols = {r[1] for r in conn.execute("PRAGMA table_info(messages)")}
-            for col in ("tipo", "subtipo"):
+            for col in ("tipo", "subtipo", "triagem"):
                 if col not in cols:
                     conn.execute(f"ALTER TABLE messages ADD COLUMN {col} TEXT")
+            for col in ("bulk", "triagem_v"):
+                if col not in cols:
+                    conn.execute(f"ALTER TABLE messages ADD COLUMN {col} INTEGER NOT NULL DEFAULT 0")
             conn.execute("CREATE INDEX IF NOT EXISTS ix_msg_tipo ON messages(tipo)")
             conn.commit()
             conn.close()
@@ -183,11 +196,12 @@ def upsert_message(account: str, m: Dict[str, Any]) -> bool:
             """
             INSERT INTO messages (id, account, thread_id, internal_date, from_raw,
                 from_name, from_email, to_raw, cc_raw, subject, snippet, label_ids,
-                message_id_header, references_header, has_attachments, tipo, subtipo)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                message_id_header, references_header, has_attachments, tipo, subtipo, bulk)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(account, id) DO UPDATE SET
                 thread_id=excluded.thread_id,
                 label_ids=excluded.label_ids,
+                bulk=excluded.bulk,
                 snippet=excluded.snippet,
                 has_attachments=MAX(messages.has_attachments, excluded.has_attachments)
             """,
@@ -197,6 +211,7 @@ def upsert_message(account: str, m: Dict[str, Any]) -> bool:
                 m["snippet"], json.dumps(m["label_ids"]), m["message_id_header"],
                 m["references_header"], 1 if m.get("has_attachments") else 0,
                 *classify.classify(m["from_raw"], m["subject"], m["snippet"]),
+                1 if m.get("bulk") else 0,
             ),
         )
         _set_labels(c, account, m["id"], m["label_ids"])
@@ -278,6 +293,8 @@ DEFAULT_SETTINGS = {
     # Quando "1", conversa lida no Gmail também aparece como lida no MarquesPro.
     # O inverso nunca acontece: abrir no MarquesPro não altera o Gmail.
     "lida_no_gmail_conta_como_lida": "0",
+    # Anúncios/promoções saem da caixa de entrada (ficam na pasta "Anúncios e promoções")
+    "ocultar_anuncios": "1",
 }
 
 
@@ -295,3 +312,14 @@ def set_setting(key: str, value: str):
 
 def all_settings() -> Dict[str, str]:
     return {k: get_setting(k) for k in DEFAULT_SETTINGS}
+
+
+# ─── Triagem (resgate do spam e anúncios) ──────────────────────────────────────
+
+def set_triagem(account: str, message_id: str, valor: Optional[str]):
+    execute("UPDATE messages SET triagem=?, triagem_v=1 WHERE account=? AND id=?", (valor, account, message_id))
+
+
+def triagem_manual(account: str, thread_id: str) -> Optional[str]:
+    r = one("SELECT valor FROM triagem_manual WHERE account=? AND thread_id=?", (account, thread_id))
+    return r["valor"] if r else None

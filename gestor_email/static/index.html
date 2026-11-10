@@ -22,7 +22,7 @@
     <button class="pill-count notif" id="counter-notif" title="Notificações judiciais recebidas hoje (intimações, citações, publicações)">
       <span class="ms">gavel</span><b id="notif-num">0</b><span class="lbl">notificações hoje</span>
     </button>
-    <button class="pill-count" id="counter" title="E-mails recebidos hoje na caixa de entrada">
+    <button class="pill-count hidden" id="counter" title="E-mails recebidos hoje na caixa de entrada">
       <span class="ms">notifications</span><b id="counter-num">0</b><span class="lbl">hoje</span>
     </button>
     <button class="icon-btn" id="btn-sync" title="Sincronizar agora"><span class="ms">sync</span></button>
@@ -167,6 +167,13 @@
             <label class="radio"><input type="radio" name="leitura" value="0" id="leitura-0"> <span><b>Independente</b> (padrão): a conversa só aparece como lida aqui depois de aberta no MarquesPro, mesmo que já tenha sido lida no Gmail.</span></label>
             <label class="radio"><input type="radio" name="leitura" value="1" id="leitura-1"> <span><b>Acompanhar o Gmail</b>: o que for lido no Gmail também aparece como lido aqui.</span></label>
             <p class="muted">Nas duas opções, abrir uma mensagem no MarquesPro <b>nunca</b> a marca como lida no Gmail. A leitura pela controladoria fica preservada.</p>
+          </div>
+        </div>
+        <div class="setting">
+          <div class="setting-name">Caixa de entrada</div>
+          <div>
+            <label class="radio"><input type="checkbox" id="ocultar-anuncios"> <span><b>Ocultar anúncios e promoções</b>: vão para Mais → Anúncios e promoções (nada é apagado).</span></label>
+            <p class="muted">Mensagens que o Gmail mandou para o spam só aparecem na caixa de entrada se forem de <b>clientes conhecidos</b> (já trocamos mensagens) ou <b>notificações/intimações</b>, sempre com o aviso "Veio do spam". O Gmail só é alterado se você clicar em "Não é spam".</p>
           </div>
         </div>
       </section>

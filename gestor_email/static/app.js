@@ -15,9 +15,10 @@ const FOLDERS = [
   {id: "INBOX", name: "Caixa de entrada", icon: "inbox"},
   {id: "NOTIF", name: "Notificações judiciais", icon: "gavel"},
   {id: "STARRED", name: "Com estrela", icon: "star"},
-  {id: "IMPORTANT", name: "Importante", icon: "label_important"},
   {id: "SENT", name: "Enviados", icon: "send"},
-  {id: "ALL", name: "Todos os e-mails", icon: "mail"},
+  {id: "IMPORTANT", name: "Importante", icon: "label_important", mais: true},
+  {id: "ALL", name: "Todos os e-mails", icon: "mail", mais: true},
+  {id: "ANUNCIOS", name: "Anúncios e promoções", icon: "campaign", mais: true},
 ];
 // Filtros rápidos de destaque (no lugar das abas Promoções/Social/Atualizações)
 const GRUPOS = [
@@ -80,8 +81,9 @@ const initial = (s) => esc(((s || "?").trim()[0] || "?").toUpperCase());
 function labelsOf(acc) { return state.labels.filter(l => l.account === acc); }
 function labelById(acc, id) { return state.labels.find(l => l.account === acc && l.id === id); }
 function userLabels(acc) { return labelsOf(acc).filter(l => l.type === "user"); }
-function chipHtml(l, removable) {
-  const st = l.bg_color ? `style="background:${esc(l.bg_color)};color:${esc(l.text_color || "#000")}"` : "";
+function chipHtml(l, removable, quiet) {
+  const st = quiet ? `style="background:transparent;color:#444746;border:1px solid ${esc(l.bg_color || "#c4c7c5")}"`
+    : l.bg_color ? `style="background:${esc(l.bg_color)};color:${esc(l.text_color || "#000")}"` : "";
   return `<span class="chip" ${st} data-label="${esc(l.id)}">${esc(l.name)}${removable ? `<span class="ms x" title="Remover marcador">close</span>` : ""}</span>`;
 }
 
@@ -140,11 +142,14 @@ function renderSidebar() {
   const st = state.status || {};
   const counts = {INBOX: st.nao_lidas_local || 0, NOTIF: st.notificacoes ? st.notificacoes.pendentes : 0};
   const isFolder = (id) => state.folder.id === id && !state.folder.name;
-  $("#folders").innerHTML = FOLDERS.map(f => `
+  const maisAtivo = FOLDERS.some(f => f.mais && isFolder(f.id));
+  const mostrarMais = state.maisPastas || maisAtivo;
+  $("#folders").innerHTML = FOLDERS.filter(f => !f.mais || mostrarMais).map(f => `
     <li data-folder="${f.id}" class="${isFolder(f.id) ? "active" : ""} ${counts[f.id] ? "has-unread" : ""} ${f.id === "NOTIF" ? "notif" : ""}"
       title="${f.id === "NOTIF" ? "Intimações, citações, publicações e demais avisos de tribunais (contador: não abertas no MarquesPro)" : esc(f.name)}">
       ${ic(f.icon, isFolder(f.id) ? "fill" : "")}<span class="name">${f.name}</span>
-      ${counts[f.id] ? `<span class="count">${counts[f.id]}</span>` : ""}</li>`).join("");
+      ${counts[f.id] ? `<span class="count">${counts[f.id]}</span>` : ""}</li>`).join("")
+    + `<li data-mais class="mais">${ic(mostrarMais ? "expand_less" : "expand_more")}<span class="name">${mostrarMais ? "Menos" : "Mais"}</span></li>`;
   const src = state.account ? userLabels(state.account) : state.labels.filter(l => l.type === "user");
   const byName = new Map();
   src.forEach(l => { if (!byName.has(l.name)) byName.set(l.name, l); });
@@ -168,10 +173,15 @@ function renderTabs() {
   box.classList.toggle("hidden", !show);
   if (!show) return;
   const pend = (state.status && state.status.notificacoes && state.status.notificacoes.pendentes_por_grupo) || {};
-  box.innerHTML = GRUPOS.map(g => `<button class="filter-chip ${state.grupo === g.id ? "on" : ""} ${g.id ? "hl" : ""}" data-grupo="${g.id}"
+  const so = $("#only-unread").checked;
+  box.innerHTML = GRUPOS.filter(g => !g.id || pend[g.id] || state.grupo === g.id).map(g => `<button class="filter-chip ${state.grupo === g.id ? "on" : ""} ${g.id ? "hl" : ""}" data-grupo="${g.id}"
       title="${g.id ? `${g.name} ainda não abertas no MarquesPro: ${pend[g.id] || 0}` : "Mostrar todas as conversas"}">
     ${ic(state.grupo === g.id ? "check" : g.icon, "sm")}<span>${g.name}</span>${g.id && pend[g.id] ? `<b class="n">${pend[g.id]}</b>` : ""}</button>`).join("");
-  $$("button", box).forEach(b => b.onclick = guard(async () => { state.grupo = b.dataset.grupo; state.offset = 0; await loadThreads(); }));
+  box.insertAdjacentHTML("beforeend", `<button class="filter-chip ${so ? "on" : ""}" data-unread title="Mostrar só conversas não lidas no MarquesPro">${ic(so ? "check" : "mark_email_unread", "sm")}<span>Não lidas</span></button>`);
+  $$("button", box).forEach(b => b.onclick = guard(async () => {
+    if ("unread" in b.dataset) $("#only-unread").checked = !$("#only-unread").checked; else state.grupo = b.dataset.grupo;
+    state.offset = 0; await loadThreads();
+  }));
 }
 
 async function loadThreads() {
@@ -219,12 +229,12 @@ function renderThreads() {
   renderPager();
   if (!state.threads.length) {
     const msg = state.search ? "Nenhuma mensagem corresponde à sua pesquisa." :
-      state.folder.id === "NOTIF" ? "Nenhuma notificação judicial por aqui." : "Nenhuma conversa nesta pasta.";
+      state.folder.id === "NOTIF" ? "Nenhuma notificação judicial por aqui." : state.folder.id === "ANUNCIOS" ? "Nenhum anúncio ou promoção." : "Nenhuma conversa nesta pasta.";
     list.innerHTML = `<div class="empty">${ic(state.folder.id === "NOTIF" ? "gavel" : "inbox")}${msg}</div>`; return;
   }
   const multi = !state.account && state.accounts.length > 1;
-  const secHl = `<div class="sec-head hl">${ic("priority_high", "sm")}Destaques <span class="muted">· intimações, citações e notificações ainda não abertas</span><b class="n">${state.hlCount}</b></div>`;
-  const secRest = `<div class="sec-head">${ic("inbox", "sm")}Todo o restante</div>`;
+  const secHl = `<div class="sec-head hl" title="Intimações, citações e notificações ainda não abertas">Destaques<b class="n">${state.hlCount}</b></div>`;
+  const secRest = `<div class="sec-head">Demais</div>`;
   list.innerHTML = state.threads.map((t, i) => (state.hlCount && i === 0 ? secHl : "") + (state.hlCount && i === state.hlCount ? secRest : "") + rowHtml(t, i, multi)).join("")
     + (state.hlCount && state.threads.length === state.hlCount ? secRest + `<div class="empty">Nenhuma outra conversa nesta página.</div>` : "");
 }
@@ -232,7 +242,9 @@ function renderThreads() {
 function rowHtml(t, i, multi) {
   {
     const chips = t.label_ids.map(id => labelById(t.account, id)).filter(l => l && l.type === "user")
-      .filter(l => !(state.folder.name && l.name === state.folder.name)).map(l => chipHtml(l)).join("");
+      .filter(l => !(state.folder.name && l.name === state.folder.name));
+    const chipsHtml = chips.slice(0, 2).map(l => chipHtml(l, false, true)).join("") +
+      (chips.length > 2 ? `<span class="chip mais-n" title="${esc(chips.slice(2).map(l => l.name).join(", "))}">+${chips.length - 2}</span>` : "");
     const atts = (t.anexos || []).map(n => `<span class="att-chip">${ic("description", "sm")}${esc(n)}</span>`).join("");
     const starred = t.label_ids.includes("STARRED");
     const hl = t.notificacao && !t.read_local;
@@ -244,11 +256,11 @@ function rowHtml(t, i, multi) {
       </div>
       <div class="from">${esc(t.senders)}${t.count > 1 ? `<span class="cnt">${t.count}</span>` : ""}</div>
       <div class="mid">
-        <div class="line1">${t.notificacao ? `<span class="chip notif" title="Notificação judicial">${ic("gavel", "sm")}${esc(t.notificacao)}</span>` : ""}${chips}
+        <div class="line1">${t.resgatado ? `<span class="chip spam" title="Estava no spam do Gmail e foi trazida para cá (${t.resgatado === "cliente" ? "remetente conhecido" : "parece notificação judicial"}). Confira o remetente.">${ic("report", "sm")}Veio do spam</span>` : ""}${t.notificacao ? `<span class="chip notif" title="Notificação judicial">${ic("gavel", "sm")}${esc(t.notificacao)}</span>` : ""}${chipsHtml}
           <span class="subj"><span class="subj-t">${esc(t.subject)}</span><span class="snip"> - ${esc(t.snippet)}</span></span></div>
         ${atts ? `<div class="att-chips">${atts}</div>` : ""}
       </div>
-      ${t.unread_gmail ? `<span class="gm" title="Ainda não lida no Gmail (status preservado para a controladoria)">${ic("mark_email_unread", "sm")}<span class="t">&nbsp;não lida no Gmail</span></span>` : ""}
+      ${t.unread_gmail ? `<span class="gm" title="Ainda não lida no Gmail (status preservado para a controladoria)">${ic("mark_email_unread", "sm")}</span>` : ""}
       ${multi ? `<span class="acc">${esc(t.account.split("@")[0])}</span>` : ""}
       ${t.has_attachments && !atts ? `<span class="ms sm" style="color:#5e5e5e;margin-left:8px" title="Possui anexo">attach_file</span>` : ""}
       <div class="date">${fmtDate(t.last_date)}</div>
@@ -278,13 +290,18 @@ function renderThreadView() {
   const notif = msgs.find(m => m.tipo === "TRIBUNAL");
   const labelChips = d.label_ids.map(id => labelById(d.account, id)).filter(l => l && l.type === "user").map(l => chipHtml(l, true)).join("");
   const lastUnreadIdx = msgs.length - 1;
+  const spamMsg = msgs.find(m => (m.triagem || "").startsWith("resgatado") && m.label_ids.includes("SPAM"));
+  const spamInfo = spamMsg ? spamMsg.triagem.split(":")[1] : "";
+  const anuncio = msgs.some(m => m.triagem === "anuncio");
   v.innerHTML = `
     <div class="tv-tools">
       <button class="icon-btn" id="tv-back" title="Voltar para a lista">${ic("arrow_back")}</button>
       <button class="icon-btn" id="tv-unread" title="Marcar como não lida (somente no MarquesPro)">${ic("mark_email_unread")}</button>
       <div class="dropdown"><button class="icon-btn" id="tv-labels-btn" title="Marcadores">${ic("label")}</button><div class="menu hidden" id="tv-label-menu"></div></div>
-      <span class="local-note" title="Abrir aqui não marca a mensagem como lida no Gmail">${ic("visibility", "sm")} Leitura somente no MarquesPro · ${esc(d.account)}</span>
+      ${anuncio ? `<button class="tool-btn" id="tv-triagem" data-v="inbox">${ic("inbox", "sm")} Não é anúncio</button>` : `<button class="icon-btn" id="tv-triagem" data-v="anuncio" title="Marcar como anúncio (some da caixa de entrada; o Gmail não é alterado)">${ic("campaign")}</button>`}
+      <span class="local-note" title="Abrir aqui não marca a mensagem como lida no Gmail (${esc(d.account)})">${ic("visibility", "sm")}</span>
     </div>
+    ${spamInfo ? `<div class="spam-banner">${ic("report")}<div><b>Esta conversa estava no spam do Gmail.</b> Foi trazida para a caixa de entrada porque ${spamInfo === "cliente" ? "o remetente é conhecido (já trocamos mensagens)" : "parece uma notificação judicial"}. Confira o remetente antes de abrir links ou anexos.</div><button class="btn" id="tv-nao-spam">Não é spam</button></div>` : ""}
     <div class="tv-head">
       <h2 class="tv-subject">${esc(msgs[0].subject)}${notif ? `<span class="chip notif">${ic("gavel", "sm")}${esc(notif.subtipo || "Notificação")}</span>` : ""}<span id="tv-labels">${labelChips}</span></h2>
     </div>
@@ -300,6 +317,15 @@ function renderThreadView() {
     await api(`/api/threads/${encodeURIComponent(d.account)}/${d.thread_id}/nao-lida`, {method: "POST"});
     const t = state.threads.find(x => x.thread_id === d.thread_id); if (t) t.read_local = false;
     showList(); renderTabs(); renderThreads(); refreshStatus();
+  });
+  if ($("#tv-nao-spam")) $("#tv-nao-spam").onclick = guard(async () => {
+    await api(`/api/threads/${encodeURIComponent(d.account)}/${d.thread_id}/nao-spam`, {method: "POST"});
+    toast("Conversa devolvida à caixa de entrada também no Gmail."); await openThread(d.account, d.thread_id);
+  });
+  $("#tv-triagem").onclick = guard(async (e) => {
+    const v = e.currentTarget.dataset.v;
+    await api(`/api/threads/${encodeURIComponent(d.account)}/${d.thread_id}/triagem`, {body: {valor: v}});
+    toast(v === "anuncio" ? "Marcado como anúncio. Está em Mais > Anúncios e promoções." : "Voltou para a caixa de entrada."); await openThread(d.account, d.thread_id); refreshStatus();
   });
   $("#tv-labels-btn").onclick = (e) => { e.stopPropagation(); labelMenu($("#tv-label-menu"), d.account, d.label_ids, async (add, remove) => {
     await api("/api/threads/labels", {body: {account: d.account, thread_ids: [d.thread_id], add, remove}});
@@ -802,6 +828,7 @@ function selectTab(id) {
 function renderGeneral() {
   const v = state.settings.lida_no_gmail_conta_como_lida === "1" ? "1" : "0";
   $(`#leitura-${v}`).checked = true;
+  $("#ocultar-anuncios").checked = state.settings.ocultar_anuncios !== "0";
 }
 function renderAccounts() {
   $("#acc-list").innerHTML = state.accounts.map(a => `<div class="card"><b>${esc(a.email)}</b>
@@ -881,6 +908,7 @@ function bind() {
   $("#btn-account").onclick = (e) => { e.stopPropagation(); const m = $("#account-menu"); const hid = m.classList.contains("hidden"); closeMenus(); if (hid) { renderAccountMenu(); m.classList.remove("hidden"); } };
   $("#account-menu").onclick = (e) => e.stopPropagation();
   $("#folders").onclick = guard(async (e) => {
+    if (e.target.closest("li[data-mais]")) { state.maisPastas = !state.maisPastas; renderSidebar(); return; }
     const li = e.target.closest("li[data-folder]"); if (!li) return;
     state.folder = {id: li.dataset.folder}; state.grupo = "";
     state.search = ""; $("#search-input").value = ""; state.offset = 0;
@@ -1020,6 +1048,11 @@ function bind() {
     toast(r.value === "1" ? "O MarquesPro passa a acompanhar as leituras feitas no Gmail." : "Leitura do MarquesPro independente do Gmail.");
     await refreshStatus(); await loadThreads();
   }));
+  $("#ocultar-anuncios").onchange = guard(async (e) => {
+    state.settings = await api("/api/settings", {body: {ocultar_anuncios: e.target.checked}});
+    toast(e.target.checked ? "Anúncios e promoções saem da caixa de entrada." : "Anúncios voltam a aparecer na caixa de entrada.");
+    await refreshStatus(); await loadThreads();
+  });
   $("#acc-connect").onclick = guard(async () => {
     toast("Abra a janela do Google para autorizar a conta…");
     const r = await api("/api/accounts/connect", {body: {email: $("#acc-hint").value.trim()}});

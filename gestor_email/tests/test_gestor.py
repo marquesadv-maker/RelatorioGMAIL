@@ -196,6 +196,7 @@ class GestorTest(unittest.TestCase):
         self.assertEqual(self.g.modify_calls, [])
 
     def test_lida_no_gmail_conta_como_lida_opcional(self):
+        self.post("/api/settings", json={"ocultar_anuncios": False})
         mid = self.g.add_message("Cliente <cliente@ex.com>", "Oi", labels=("INBOX", "UNREAD", "CATEGORY_PERSONAL"))
         self.g.add_message("Loja <promo@loja.com>", "Oferta", labels=("INBOX", "UNREAD", "CATEGORY_PROMOTIONS"))
         sync.sync_account(ME)
@@ -275,6 +276,62 @@ class GestorTest(unittest.TestCase):
         imgs = [p for p in raw.walk() if p.get_content_type() == "image/png"]
         self.assertEqual(len(imgs), 1)
         self.assertIn("cid:", raw.get_body(("html",)).get_content())
+
+    def _assuntos(self, url):
+        return sorted(t["subject"] for t in self.get(url))
+
+    def test_resgate_do_spam_e_anuncios(self):
+        # Histórico: já escrevemos ao cliente e ele já nos escreveu antes
+        self.g.add_message(f"Dr. <{ME}>", "Contrato", labels=("SENT",), to="Cliente Antigo <antigo@cliente.com>")
+        self.g.add_message("Cliente Conhecido <conhecido@cliente.com>", "Dúvida anterior", labels=("INBOX",))
+        # Na caixa
+        self.g.add_message("Loja <promo@loja.com>", "Oferta imperdível", labels=("INBOX", "UNREAD", "CATEGORY_PROMOTIONS"))
+        self.g.add_message("Boletim <news@boletim.com>", "Novidades da semana", labels=("INBOX", "UNREAD"),
+                           extra_headers=[{"name": "List-Unsubscribe", "value": "<mailto:x@y>"}])
+        # No spam
+        self.g.add_message("Cliente Antigo <antigo@cliente.com>", "Segue documento", labels=("SPAM", "UNREAD"))
+        self.g.add_message("Cliente Conhecido <conhecido@cliente.com>", "Dúvida urgente", labels=("SPAM", "UNREAD"))
+        self.g.add_message("PJe <naoresponda@trt2.jus.br>", "Intimação - Processo 1", labels=("SPAM", "UNREAD"))
+        self.g.add_message("Desconhecido <alguem@golpe.com>", "Você ganhou um prêmio", labels=("SPAM", "UNREAD"))
+        self.g.add_message("Marketing <marketing@agencia.com>", "Promoção de curso online", labels=("SPAM", "UNREAD"),
+                           extra_headers=[{"name": "List-Unsubscribe", "value": "<mailto:x@y>"}])
+        self.g.add_message("Estranho <fulano@gmail.com>", "Oi, tudo bem?", labels=("SPAM", "UNREAD"))
+        sync.sync_account(ME)
+
+        caixa = self._assuntos("/api/threads?label=INBOX")
+        self.assertEqual(caixa, ["Dúvida anterior", "Dúvida urgente", "Intimação - Processo 1", "Segue documento"])
+        self.assertEqual(self._assuntos("/api/threads?label=ANUNCIOS"), ["Novidades da semana", "Oferta imperdível"])
+        # O que não é cliente nem notificação continua só no spam
+        todos = self._assuntos("/api/threads?label=ALL")
+        for fora in ("Você ganhou um prêmio", "Promoção de curso online", "Oi, tudo bem?"):
+            self.assertNotIn(fora, todos)
+        # Resgatados indicam a origem; a notificação entra no contador
+        por_assunto = {t["subject"]: t for t in self.get("/api/threads?label=INBOX")}
+        self.assertEqual(por_assunto["Segue documento"]["resgatado"], "cliente")
+        self.assertEqual(por_assunto["Intimação - Processo 1"]["resgatado"], "notificacao")
+        self.assertIsNone(por_assunto["Dúvida anterior"]["resgatado"])
+        self.assertEqual(self.get("/api/status")["notificacoes"]["pendentes"], 1)
+        # Nada foi alterado no Gmail até agora
+        self.assertEqual(self.g.modify_calls, [])
+        # Preferência: mostrar anúncios de volta na caixa
+        self.post("/api/settings", json={"ocultar_anuncios": False})
+        self.assertIn("Oferta imperdível", self._assuntos("/api/threads?label=INBOX"))
+
+    def test_nao_spam_move_no_gmail_e_correcao_manual(self):
+        self.g.add_message(f"Dr. <{ME}>", "Oi", labels=("SENT",), to="Cli <cli@x.com>")
+        mid = self.g.add_message("Cli <cli@x.com>", "Resposta", labels=("SPAM", "UNREAD"))
+        loja = self.g.add_message("Loja <l@loja.com>", "Oferta", labels=("INBOX", "UNREAD", "CATEGORY_PROMOTIONS"))
+        sync.sync_account(ME)
+        tid = self.g.msg_store[mid]["threadId"]
+        self.post(f"/api/threads/{ME}/{tid}/nao-spam")
+        self.assertEqual(sorted(self.g.msg_store[mid]["labelIds"]), ["INBOX", "UNREAD"])
+        self.assertIn("Resposta", self._assuntos("/api/threads?label=INBOX"))
+        # Falso anúncio: o usuário devolve à caixa (só local) e a correção resiste a novas sincronizações
+        tl = self.g.msg_store[loja]["threadId"]
+        self.assertNotIn("Oferta", self._assuntos("/api/threads?label=INBOX"))
+        self.post(f"/api/threads/{ME}/{tl}/triagem", json={"valor": "inbox"})
+        sync.sync_account(ME)
+        self.assertIn("Oferta", self._assuntos("/api/threads?label=INBOX"))
 
     def test_anexo_svg_nunca_inline(self):
         mid = self.g.add_message("X <x@ex.com>", "Img")

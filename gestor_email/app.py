@@ -14,7 +14,7 @@ from typing import Any, Dict, List
 from flask import Flask, Response, abort, jsonify, request, send_from_directory
 from googleapiclient.errors import HttpError
 
-from . import auth, config, db, gmail_ops, ia, modelos, sync
+from . import auth, config, db, gmail_ops, ia, modelos, sync, triagem
 
 INLINE_IMAGE_TYPES = {"image/png", "image/jpeg", "image/gif", "image/webp", "image/bmp"}
 
@@ -27,6 +27,7 @@ SYSTEM_LABEL_NAMES = {
 def create_app() -> Flask:
     app = Flask(__name__, static_folder="static", static_url_path="/static")
     db.backfill_tipos()
+    triagem.reprocessar()
     app.config["SESSION_TOKEN"] = secrets.token_urlsafe(32)
     app.config["MAX_CONTENT_LENGTH"] = 30 * 1024 * 1024  # anexos até ~25 MB
 
@@ -166,7 +167,13 @@ def create_app() -> Flask:
             params.append(label_name)
         elif label == "ALL":
             where.append("NOT EXISTS (SELECT 1 FROM message_labels x WHERE x.account=m.account "
-                         "AND x.message_id=m.id AND x.label_id IN ('SPAM','TRASH'))")
+                         "AND x.message_id=m.id AND x.label_id='TRASH') AND (NOT EXISTS (SELECT 1 FROM message_labels xp "
+                         "WHERE xp.account=m.account AND xp.message_id=m.id AND xp.label_id='SPAM') "
+                         "OR COALESCE(m.triagem,'') LIKE 'resgatado%')")
+        elif label == "ANUNCIOS":
+            where.append("m.triagem='anuncio'")
+        elif label == "INBOX":
+            where.append(_caixa_sql())
         else:
             where.append("EXISTS (SELECT 1 FROM message_labels x WHERE x.account=m.account "
                          "AND x.message_id=m.id AND x.label_id=?)")
@@ -239,6 +246,25 @@ def create_app() -> Flask:
         db.execute("INSERT OR IGNORE INTO local_read (account, thread_id) VALUES (?,?)", (account, thread_id))
         return jsonify({"ok": True})
 
+    @app.post("/api/threads/<account>/<thread_id>/nao-spam")
+    def nao_spam(account, thread_id):
+        """Ação explícita do usuário: devolve a conversa à caixa de entrada também no Gmail."""
+        account = _require_account(account)
+        gmail_ops.mover_para_caixa(auth.get_service(account), account, thread_id)
+        for r in db.rows("SELECT * FROM messages WHERE account=? AND thread_id=?", (account, thread_id)):
+            m = db.decode_message(r); m["thread_id"] = thread_id
+            triagem.aplicar(account, m)
+        return jsonify({"ok": True})
+
+    @app.post("/api/threads/<account>/<thread_id>/triagem")
+    def triagem_manual(account, thread_id):
+        """Corrige a triagem local: 'inbox' (não é anúncio) ou 'anuncio'. O Gmail não é alterado."""
+        valor = (request.json or {}).get("valor")
+        if valor not in ("inbox", "anuncio"):
+            return jsonify({"erro": "Valor inválido"}), 400
+        triagem.alterar_conversa(_require_account(account), thread_id, valor)
+        return jsonify({"ok": True})
+
     @app.post("/api/threads/<account>/<thread_id>/nao-lida")
     def mark_unread_local(account, thread_id):
         db.execute("DELETE FROM local_read WHERE account=? AND thread_id=?", (account, thread_id))
@@ -297,8 +323,7 @@ def create_app() -> Flask:
         acc_sql, acc_params = ("AND m.account=?", [account]) if account else ("", [])
         today = db.one(
             f"""SELECT COUNT(*) AS n FROM messages m WHERE m.internal_date>=? {acc_sql}
-                AND EXISTS (SELECT 1 FROM message_labels x WHERE x.account=m.account
-                            AND x.message_id=m.id AND x.label_id='INBOX')""",
+                AND {_caixa_sql()}""",
             [ms] + acc_params)["n"]
         def unread_threads(extra: str, extra_params=()) -> int:
             return db.one(
@@ -306,8 +331,7 @@ def create_app() -> Flask:
                     WHERE 1=1 {acc_sql} AND {extra}) t WHERE NOT {_read_sql('t.account', 't.thread_id')}""",
                 list(acc_params) + list(extra_params))["n"]
 
-        inbox_sql = ("EXISTS (SELECT 1 FROM message_labels x WHERE x.account=m.account "
-                     "AND x.message_id=m.id AND x.label_id='INBOX')")
+        inbox_sql = _caixa_sql()
         unread_local = unread_threads(inbox_sql)
         por_categoria = {c: unread_threads(f"{inbox_sql} AND {_category_sql(c)}")
                          for c in ("principal", "promocoes", "social", "atualizacoes", "foruns")}
@@ -334,9 +358,7 @@ def create_app() -> Flask:
         notif_today = db.one(
             f"SELECT COUNT(*) AS n FROM notifications WHERE created_at>=? {nacc_sql}",
             [midnight.strftime("%Y-%m-%d %H:%M:%S")] + acc_params)["n"]
-        notif_where = f"""FROM messages m WHERE m.tipo='TRIBUNAL' {acc_sql}
-                AND NOT EXISTS (SELECT 1 FROM message_labels x WHERE x.account=m.account
-                                AND x.message_id=m.id AND x.label_id IN ('SENT','SPAM','TRASH'))"""
+        notif_where = f"""FROM messages m WHERE m.tipo='TRIBUNAL' {acc_sql} AND {_FORA_SPAM_SQL}"""
         notif_hoje = db.one(f"SELECT COUNT(*) AS n {notif_where} AND m.internal_date>=?", acc_params + [ms])["n"]
         notif_pend = db.one(
             f"""SELECT COUNT(*) AS n FROM (SELECT DISTINCT m.account, m.thread_id {notif_where}) t
@@ -345,9 +367,7 @@ def create_app() -> Flask:
         for g, cond in GRUPOS_NOTIF.items():
             grupos[g] = db.one(
                 f"""SELECT COUNT(*) AS n FROM (SELECT DISTINCT m.account, m.thread_id FROM messages m
-                    WHERE {cond} {acc_sql}
-                    AND NOT EXISTS (SELECT 1 FROM message_labels x WHERE x.account=m.account
-                                    AND x.message_id=m.id AND x.label_id IN ('SENT','SPAM','TRASH'))) t
+                    WHERE {cond} {acc_sql} AND {_FORA_SPAM_SQL}) t
                     WHERE NOT {_read_sql('t.account', 't.thread_id')}""", acc_params)["n"]
         notif_tipos = db.rows(
             f"SELECT COALESCE(m.subtipo,'Outras') AS nome, COUNT(*) AS n {notif_where} AND m.internal_date>=? "
@@ -646,6 +666,23 @@ GRUPOS_NOTIF = {
     "notificacoes": "m.tipo='TRIBUNAL' AND COALESCE(m.subtipo,'') NOT IN ('Intimação','Citação')",
 }
 
+def _sem_ads_sql() -> str:
+    """Exclui anúncios quando a preferência "ocultar anúncios" está ativa."""
+    return "COALESCE(m.triagem,'')<>'anuncio'" if db.get_setting("ocultar_anuncios") == "1" else "1=1"
+
+
+def _caixa_sql() -> str:
+    """Caixa de entrada: INBOX (sem anúncios) + mensagens resgatadas do spam."""
+    return ("((EXISTS (SELECT 1 FROM message_labels xi WHERE xi.account=m.account AND xi.message_id=m.id "
+            f"AND xi.label_id='INBOX') AND {_sem_ads_sql()}) OR COALESCE(m.triagem,'') LIKE 'resgatado%')")
+
+
+# Fora da lixeira e do spam, exceto o que foi resgatado
+_FORA_SPAM_SQL = ("NOT EXISTS (SELECT 1 FROM message_labels xs WHERE xs.account=m.account AND xs.message_id=m.id "
+                  "AND xs.label_id IN ('SENT','TRASH')) AND (NOT EXISTS (SELECT 1 FROM message_labels xp "
+                  "WHERE xp.account=m.account AND xp.message_id=m.id AND xp.label_id='SPAM') "
+                  "OR COALESCE(m.triagem,'') LIKE 'resgatado%')")
+
 CATEGORY_LABELS = {"promocoes": "CATEGORY_PROMOTIONS", "social": "CATEGORY_SOCIAL",
                    "atualizacoes": "CATEGORY_UPDATES", "foruns": "CATEGORY_FORUMS"}
 
@@ -677,7 +714,7 @@ def _read_sql(acc: str, tid: str) -> str:
 
 def _thread_summary(t: Dict[str, Any]) -> Dict[str, Any]:
     msgs = db.rows(
-        "SELECT id, from_name, from_email, subject, snippet, label_ids, internal_date, has_attachments, tipo, subtipo, body_json "
+        "SELECT id, from_name, from_email, subject, snippet, label_ids, internal_date, has_attachments, tipo, subtipo, triagem, body_json "
         "FROM messages WHERE account=? AND thread_id=? ORDER BY internal_date",
         (t["account"], t["thread_id"]))
     last = msgs[-1]
@@ -704,6 +741,9 @@ def _thread_summary(t: Dict[str, Any]) -> Dict[str, Any]:
         "last_message_id": last["id"],
         "notificacao": next((m["subtipo"] or "Outras" for m in msgs if m["tipo"] == "TRIBUNAL"), None),
         "important": "IMPORTANT" in labels,
+        "resgatado": next((m["triagem"].split(":", 1)[1] for m in msgs
+                           if (m.get("triagem") or "").startswith("resgatado") and "SPAM" in json.loads(m["label_ids"])), None),
+        "anuncio": any(m.get("triagem") == "anuncio" for m in msgs),
         "anexos": _attachment_names(msgs),
     }
 

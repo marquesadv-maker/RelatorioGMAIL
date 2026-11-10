@@ -52,7 +52,7 @@ class FakeGmail:
 
     # ─── Helpers de teste ───────────────────────────────────────────────
     def add_message(self, frm, subject, body="Olá", labels=("INBOX", "UNREAD"), thread_id=None,
-                    date_ms=None, to=None, attachment=None):
+                    date_ms=None, to=None, attachment=None, extra_headers=None):
         mid = f"m{next(self._ids)}"
         parts = [{"mimeType": "text/plain", "body": {"data": b64(body)}, "headers": []},
                  {"mimeType": "text/html", "body": {"data": b64(f"<p>{body}</p>")}, "headers": []}]
@@ -65,7 +65,7 @@ class FakeGmail:
             "snippet": body[:50], "internalDate": str(date_ms or int(time.time() * 1000)),
             "payload": {"mimeType": "multipart/mixed", "parts": parts, "headers": [
                 {"name": "From", "value": frm}, {"name": "To", "value": to or self.me},
-                {"name": "Subject", "value": subject}, {"name": "Message-ID", "value": f"<{mid}@x>"}]},
+                {"name": "Subject", "value": subject}, {"name": "Message-ID", "value": f"<{mid}@x>"}] + list(extra_headers or [])},
         }
         self.history_id += 1
         self.hist_store.append({"id": str(self.history_id), "messagesAdded": [{"message": {"id": mid}}]})
