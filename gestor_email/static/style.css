@@ -407,3 +407,33 @@ table.rules th{color:var(--text2);font-weight:500}
 .mp-campos input.org-regra{border-color:#c39bd3}
 .mp-semia{margin-top:8px;padding:8px 10px;background:#fff3b0;border-radius:6px;font-size:12px;color:#5f4300}
 .setting input[type=number]{width:70px;padding:4px 6px;border:1px solid var(--line,#dadce0);border-radius:6px}
+
+/* Novos do dia, palavras em destaque e pendências */
+.chip.novo{background:#e6f4ea;color:#137333}
+.chip.pend{background:#fff3b0;color:#5f4300}
+.chip.pend.pendente{background:#fde7e9;color:#a50e0e}
+.chip.pend.em_execucao{background:#e8f0fe;color:#1a56c4}
+.chip.pend.leve{background:#fff3b0;color:#5f4300}
+.row-t.novo{box-shadow:inset 4px 0 0 #1e8e3e}
+.row-t.novo.hl{box-shadow:inset 4px 0 0 #d93025}
+.row-t.enfase .subj-t{font-weight:700}
+mark.kw{background:#ffe08a;color:#3b2a00;border-radius:3px;padding:0 2px;font-weight:700}
+.filter-chip.novo .n{background:#1e8e3e;color:#fff;border-radius:9px;padding:0 6px;margin-left:4px;font-size:11px}
+.pend-head{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center;justify-content:space-between;padding:14px 20px 8px;border-bottom:1px solid var(--line)}
+.pend-head .muted{font-size:12px;max-width:560px}
+.pend-tabs{display:flex;gap:6px;padding:0}
+.pend-card{display:flex;gap:16px;justify-content:space-between;align-items:flex-start;padding:14px 20px;border-bottom:1px solid var(--line);box-shadow:inset 4px 0 0 #f2c94c}
+.pend-card.atraso{box-shadow:inset 4px 0 0 #d93025;background:#fffbfa}
+.pend-card.em_execucao{box-shadow:inset 4px 0 0 #1a73e8}
+.pend-card.concluida{box-shadow:inset 4px 0 0 #81c995;opacity:.8}
+.pend-main{min-width:0;flex:1}
+.pend-top{display:flex;flex-wrap:wrap;gap:6px 8px;align-items:center;font-size:13px}
+.pend-subj{font-weight:500;margin:2px 0}
+.pend-q{margin:4px 0;padding:4px 10px;border-left:3px solid #dadce0;color:#3c4043;font-size:13px;font-style:italic}
+.pend-nota{display:flex;gap:4px;align-items:center;font-size:12px;color:#5f6368}
+.pend-acts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.pend-banner{display:flex;align-items:center;gap:8px;margin:0 24px 6px 72px;padding:8px 12px;border-radius:8px;background:#fde7e9;color:#a50e0e;font-size:13px}
+.pend-banner.em_execucao{background:#e8f0fe;color:#1a56c4}
+.pend-banner .spacer{flex:1}
+.pend-banner .link-btn{font-weight:500;color:inherit;text-decoration:underline}
+@media (max-width:760px){.pend-card{flex-direction:column}.pend-banner{margin-left:16px}}

@@ -137,6 +137,20 @@ CREATE TABLE IF NOT EXISTS envios (
     PRIMARY KEY (account, thread_id, message_id)
 );
 
+-- Acompanhamento de tratativas: pergunta do cliente sem resposta (detectada ou marcada à mão)
+CREATE TABLE IF NOT EXISTS pendencias (
+    account       TEXT NOT NULL,
+    thread_id     TEXT NOT NULL,
+    message_id    TEXT NOT NULL,
+    status        TEXT NOT NULL DEFAULT 'pendente',
+    origem        TEXT NOT NULL DEFAULT 'detectada',
+    nota          TEXT NOT NULL DEFAULT '',
+    concluido_por TEXT,
+    criado        TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+    atualizado    TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+    PRIMARY KEY (account, thread_id, message_id)
+);
+
 CREATE TABLE IF NOT EXISTS settings (
     key   TEXT PRIMARY KEY,
     value TEXT
@@ -324,6 +338,8 @@ DEFAULT_SETTINGS = {
     "ia_ler_imagens_auto": "1",
     # Regra do escritório: prazo interno = N dias úteis antes da data do ato (vazio = preencher manualmente)
     "prazo_interno_dias": "",
+    # Palavras que ganham ênfase na lista (assunto e trecho), separadas por vírgula
+    "palavras_destaque": "intimação, notificação, citação, urgente, prazo, audiência, sentença, mandado, penhora, bloqueio",
 }
 
 

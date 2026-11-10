@@ -14,6 +14,7 @@ const ic = (name, cls = "") => `<span class="ms ${cls}">${name}</span>`;
 const FOLDERS = [
   {id: "INBOX", name: "Caixa de entrada", icon: "inbox"},
   {id: "NOTIF", name: "Notificações judiciais", icon: "gavel"},
+  {id: "PEND", name: "Pendências", icon: "pending_actions"},
   {id: "STARRED", name: "Com estrela", icon: "star"},
   {id: "SENT", name: "Enviados", icon: "send"},
   {id: "IMPORTANT", name: "Importante", icon: "label_important", mais: true},
@@ -29,6 +30,7 @@ const GRUPOS = [
 ];
 
 const state = {
+  novos: false, pendAba: "pendente",
   accounts: [], account: "", folder: {id: "INBOX"}, grupo: "", offset: 0, total: 0, hlCount: 0,
   labels: [], threads: [], selected: new Set(), sendAs: [], settings: {},
   lastNotif: null, notifHoje: null, status: null, search: "", searchGmail: false, current: null,
@@ -181,12 +183,13 @@ function renderAccountMenu() {
 
 function renderSidebar() {
   const st = state.status || {};
-  const counts = {INBOX: st.nao_lidas_local || 0, NOTIF: st.notificacoes ? st.notificacoes.pendentes : 0};
+  const counts = {INBOX: st.nao_lidas_local || 0, NOTIF: st.notificacoes ? st.notificacoes.pendentes : 0,
+    PEND: st.pendencias ? st.pendencias.abertas + st.pendencias.em_execucao : 0};
   const isFolder = (id) => state.folder.id === id && !state.folder.name;
   const maisAtivo = FOLDERS.some(f => f.mais && isFolder(f.id));
   const mostrarMais = state.maisPastas || maisAtivo;
   $("#folders").innerHTML = FOLDERS.filter(f => !f.mais || mostrarMais).map(f => `
-    <li data-folder="${f.id}" class="${isFolder(f.id) ? "active" : ""} ${counts[f.id] ? "has-unread" : ""} ${f.id === "NOTIF" ? "notif" : ""}"
+    <li data-folder="${f.id}" class="${isFolder(f.id) ? "active" : ""} ${counts[f.id] ? "has-unread" : ""} ${f.id === "NOTIF" || f.id === "PEND" ? "notif" : ""}"
       title="${f.id === "NOTIF" ? "Intimações, citações, publicações e demais avisos de tribunais (contador: não abertas no MarquesPro)" : esc(f.name)}">
       ${ic(f.icon, isFolder(f.id) ? "fill" : "")}<span class="name">${f.name}</span>
       ${counts[f.id] ? `<span class="count">${counts[f.id]}</span>` : ""}</li>`).join("")
@@ -210,6 +213,7 @@ function renderSidebar() {
 
 function renderTabs() {
   const show = ["INBOX", "NOTIF"].includes(state.folder.id) && !state.folder.name && !state.search;
+  if (state.folder.id !== "INBOX") state.novos = false;
   const box = $("#tabs-inbox");
   box.classList.toggle("hidden", !show);
   if (!show) return;
@@ -218,9 +222,14 @@ function renderTabs() {
   box.innerHTML = GRUPOS.filter(g => !g.id || pend[g.id] || state.grupo === g.id).map(g => `<button class="filter-chip ${state.grupo === g.id ? "on" : ""} ${g.id ? "hl" : ""}" data-grupo="${g.id}"
       title="${g.id ? `${g.name} ainda não abertas no MarquesPro: ${pend[g.id] || 0}` : "Mostrar todas as conversas"}">
     ${ic(state.grupo === g.id ? "check" : g.icon, "sm")}<span>${g.name}</span>${g.id && pend[g.id] ? `<b class="n">${pend[g.id]}</b>` : ""}</button>`).join("");
+  if (state.folder.id === "INBOX") {
+    const nn = (state.status && state.status.novos_hoje) || 0;
+    box.insertAdjacentHTML("beforeend", `<button class="filter-chip novo ${state.novos ? "on" : ""}" data-novos title="E-mails novos de hoje, fora da cadeia de conversas (primeiro contato do dia)">${ic(state.novos ? "check" : "fiber_new", "sm")}<span>Novos hoje</span>${nn ? `<b class="n">${nn}</b>` : ""}</button>`);
+  }
   box.insertAdjacentHTML("beforeend", `<button class="filter-chip ${so ? "on" : ""}" data-unread title="Mostrar só conversas não lidas no MarquesPro">${ic(so ? "check" : "mark_email_unread", "sm")}<span>Não lidas</span></button>`);
-  $$("button[data-grupo], button[data-unread]", box).forEach(b => b.onclick = guard(async () => {
-    if ("unread" in b.dataset) $("#only-unread").checked = !$("#only-unread").checked; else state.grupo = b.dataset.grupo;
+  $$("button[data-grupo], button[data-unread], button[data-novos]", box).forEach(b => b.onclick = guard(async () => {
+    if ("novos" in b.dataset) state.novos = !state.novos;
+    else if ("unread" in b.dataset) $("#only-unread").checked = !$("#only-unread").checked; else { state.grupo = b.dataset.grupo; state.novos = false; }
     state.offset = 0; await loadThreads();
   }));
   if (state.folder.id === "INBOX") {
@@ -233,6 +242,7 @@ function renderTabs() {
 async function loadThreads() {
   const list = $("#thread-list");
   showList();
+  if (state.folder.id === "PEND" && !state.folder.name && !state.search) { $("#tabs-inbox").classList.add("hidden"); state.threads = []; state.hlCount = 0; renderPager(); return renderPendencias(); }
   renderTabs();
   let data, total, highlights = [];
   if (state.search && state.searchGmail) {
@@ -246,7 +256,8 @@ async function loadThreads() {
     else p.label = state.folder.id;
     if (state.grupo && ["INBOX", "NOTIF"].includes(state.folder.id) && !state.folder.name) p.grupo = state.grupo;
     // Caixa de entrada: Destaques do período escolhido, por prioridade (intimações/citações não abertas primeiro)
-    const withHl = state.folder.id === "INBOX" && !state.folder.name && !state.search && !state.grupo && !p.nao_lidas;
+    if (state.novos && state.folder.id === "INBOX") p.novos = 1;
+    const withHl = state.folder.id === "INBOX" && !state.folder.name && !state.search && !state.grupo && !p.nao_lidas && !state.novos;
     state.jan = withHl ? janelaPeriodo() : null;
     if (withHl) {
       const j = state.jan;
@@ -278,7 +289,7 @@ function renderThreads() {
   if (!state.threads.length) {
     const msg = state.search ? "Nenhuma mensagem corresponde à sua pesquisa." :
       state.jan && state.jan.soPeriodo ? `Nenhum e-mail no período (${state.jan.rotulo}).` :
-      state.folder.id === "NOTIF" ? "Nenhuma notificação judicial por aqui." : state.folder.id === "ANUNCIOS" ? "Nenhum anúncio ou promoção." : "Nenhuma conversa nesta pasta.";
+      state.novos ? "Nenhum e-mail novo (fora da cadeia) hoje." : state.folder.id === "NOTIF" ? "Nenhuma notificação judicial por aqui." : state.folder.id === "ANUNCIOS" ? "Nenhum anúncio ou promoção." : "Nenhuma conversa nesta pasta.";
     list.innerHTML = `<div class="empty">${ic(state.folder.id === "NOTIF" ? "gavel" : "inbox")}${msg}</div>`; return;
   }
   const multi = !state.account && state.accounts.length > 1;
@@ -290,6 +301,66 @@ function renderThreads() {
     + (!soPer && state.hlCount && state.threads.length === state.hlCount ? secRest + `<div class="empty">Nenhuma outra conversa nesta página.</div>` : "");
 }
 
+// Destaca (sem diferenciar acentos) as palavras de atenção dentro de um texto
+const _acentos = {a: "aàáâãä", e: "eèéêë", i: "iìíîï", o: "oòóôõö", u: "uùúûü", c: "cç"};
+function realce(texto, palavras) {
+  texto = String(texto ?? "");
+  if (!palavras || !palavras.length) return esc(texto);
+  const pad = palavras.map(p => String(p).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").split("")
+    .map(ch => /[a-z]/.test(ch) ? (_acentos[ch] ? `[${_acentos[ch]}]` : ch) : ch.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("")).join("|");
+  const re = new RegExp(`(${pad})`, "gi");
+  return texto.split(re).map((parte, k) => k % 2 ? `<mark class="kw">${esc(parte)}</mark>` : esc(parte)).join("");
+}
+
+// ─── Pendências (tratativas sem resposta) ─────────────────────────────────
+const PEND_ABAS = [{id: "pendente", nome: "Sem resposta", icon: "reply"}, {id: "em_execucao", nome: "Em execução", icon: "pending"}, {id: "concluida", nome: "Concluídas", icon: "task_alt"}];
+async function renderPendencias() {
+  const list = $("#thread-list");
+  const itens = await api(`/api/pendencias?${qs({account: state.account})}`);
+  const cont = (id) => itens.filter(i => i.status === id).length;
+  const vis = itens.filter(i => i.status === state.pendAba);
+  const abas = PEND_ABAS.map(a => `<button class="filter-chip ${state.pendAba === a.id ? "on" : ""} ${a.id === "pendente" ? "hl" : ""}" data-pabas="${a.id}">${ic(state.pendAba === a.id ? "check" : a.icon, "sm")}<span>${a.nome}</span><b class="n">${cont(a.id)}</b></button>`).join("");
+  const vazio = {pendente: "Nenhuma pergunta de cliente aguardando resposta. Tudo em dia.", em_execucao: "Nenhuma tratativa em execução.", concluida: "Nenhuma tratativa concluída ainda."}[state.pendAba];
+  list.innerHTML = `<div class="pend-head"><div><b>Tratativas pendentes</b><div class="muted">Perguntas ou pedidos de clientes que ainda não foram respondidos. Somem sozinhas quando o e-mail é respondido, ou conclua manualmente.</div></div><div class="tabs-inbox pend-tabs">${abas}</div></div>`
+    + (vis.length ? vis.map((p, k) => pendCard(p, k)).join("") : `<div class="empty">${ic("task_alt")}${vazio}</div>`);
+  $$("[data-pabas]", list).forEach(b => b.onclick = guard(async () => { state.pendAba = b.dataset.pabas; await renderPendencias(); }));
+  $$(".pend-card", list).forEach(c => {
+    const p = vis[+c.dataset.k];
+    const set = async (status, pedeNota) => {
+      let nota = p.nota || "";
+      if (pedeNota) { const r = prompt(status === "concluida" ? "Como foi resolvido? (opcional)" : "O que está sendo feito? (opcional)", nota); if (r === null) return; nota = r; }
+      await api(`/api/pendencias/${encodeURIComponent(p.account)}/${p.thread_id}`, {body: {status, nota, message_id: p.message_id}});
+      await refreshStatus(); await renderPendencias();
+    };
+    $("[data-abrir]", c).onclick = guard(() => openThread(p.account, p.thread_id));
+    const b = (a) => $(`[data-${a}]`, c);
+    if (b("exec")) b("exec").onclick = guard(() => set("em_execucao", true));
+    if (b("voltar")) b("voltar").onclick = guard(() => set("pendente", false));
+    if (b("concluir")) b("concluir").onclick = guard(() => set("concluida", true));
+    if (b("reabrir")) b("reabrir").onclick = guard(() => set("pendente", false));
+  });
+}
+function pendCard(p, k) {
+  const espera = p.status === "concluida" ? "" : p.dias_espera ? `aguardando há ${p.dias_espera} dia${p.dias_espera > 1 ? "s" : ""}` : "chegou hoje";
+  const urgente = p.status === "pendente" && p.dias_espera >= 2;
+  const por = p.status === "concluida" ? (p.concluido_por === "resposta" ? "Respondido pelo MarquesPro" : "Concluído manualmente") : "";
+  return `<div class="pend-card ${p.status} ${urgente ? "atraso" : ""}" data-k="${k}">
+    <div class="pend-main">
+      <div class="pend-top"><b>${esc(p.de_nome || p.de_email || "Cliente")}</b><span class="muted">${esc(p.de_email && p.de_nome ? `<${p.de_email}>` : "")}</span>
+        ${espera ? `<span class="chip pend ${urgente ? "pendente" : "leve"}">${ic("schedule", "sm")}${espera}</span>` : ""}
+        ${p.origem === "manual" ? `<span class="chip">marcada por você</span>` : ""}${por ? `<span class="chip">${ic("task_alt", "sm")}${por}</span>` : ""}</div>
+      <div class="pend-subj">${esc(p.assunto)}</div>
+      ${p.trecho ? `<blockquote class="pend-q">${esc(p.trecho)}</blockquote>` : ""}
+      ${p.nota ? `<div class="pend-nota">${ic("sticky_note_2", "sm")}${esc(p.nota)}</div>` : ""}
+    </div>
+    <div class="pend-acts">
+      <button class="btn" data-abrir>${ic("open_in_new", "sm")} Abrir</button>
+      ${p.status === "pendente" ? `<button class="btn" data-exec>${ic("pending", "sm")} Em execução</button><button class="btn primary" data-concluir>${ic("check", "sm")} Concluir</button>` : ""}
+      ${p.status === "em_execucao" ? `<button class="btn" data-voltar>Voltar a pendente</button><button class="btn primary" data-concluir>${ic("check", "sm")} Concluir</button>` : ""}
+      ${p.status === "concluida" ? `<button class="btn" data-reabrir>Reabrir</button>` : ""}
+    </div></div>`;
+}
+
 function rowHtml(t, i, multi) {
   {
     const chips = t.label_ids.map(id => labelById(t.account, id)).filter(l => l && l.type === "user")
@@ -299,7 +370,11 @@ function rowHtml(t, i, multi) {
     const atts = (t.anexos || []).map(n => `<span class="att-chip">${ic("description", "sm")}${esc(n)}</span>`).join("");
     const starred = t.label_ids.includes("STARRED");
     const hl = t.notificacao && !t.read_local;
-    return `<div class="row-t ${t.read_local ? "" : "unread"} ${hl ? "hl" : ""} ${state.selected.has(i) ? "selected" : ""}" data-i="${i}">
+    const pal = t.palavras || [];
+    const pend = t.pendencia;
+    const pendChip = pend ? `<span class="chip pend ${pend.status}" title="${esc(pend.status === "em_execucao" ? "Tratativa em execução" : "Cliente perguntou e ainda não foi respondido")}: ${esc(pend.trecho)}">${ic(pend.status === "em_execucao" ? "pending" : "reply", "sm")}${pend.status === "em_execucao" ? "Em execução" : `Sem resposta${pend.dias ? ` · ${pend.dias}d` : ""}`}</span>` : "";
+    const novoChip = t.novo ? `<span class="chip novo" title="Conversa nova de hoje, fora da cadeia de e-mails">${ic("fiber_new", "sm")}Novo</span>` : "";
+    return `<div class="row-t ${t.read_local ? "" : "unread"} ${hl ? "hl" : ""} ${t.novo ? "novo" : ""} ${pal.length ? "enfase" : ""} ${state.selected.has(i) ? "selected" : ""}" data-i="${i}">
       <div class="lead">
         <span class="cell"><input type="checkbox" class="sel" ${state.selected.has(i) ? "checked" : ""} aria-label="Selecionar"></span>
         <button class="star ${starred ? "on" : ""}" title="${starred ? "Com estrela" : "Sem estrela"}">${ic("star", starred ? "fill" : "")}</button>
@@ -307,8 +382,8 @@ function rowHtml(t, i, multi) {
       </div>
       <div class="from">${esc(t.senders)}${t.count > 1 ? `<span class="cnt">${t.count}</span>` : ""}</div>
       <div class="mid">
-        <div class="line1">${t.resgatado ? `<span class="chip spam" title="Estava no spam do Gmail e foi trazida para cá (${t.resgatado === "cliente" ? "remetente conhecido" : "parece notificação judicial"}). Confira o remetente.">${ic("report", "sm")}Veio do spam</span>` : ""}${t.notificacao ? `<span class="chip notif" title="Notificação judicial">${ic("gavel", "sm")}${esc(t.notificacao)}</span>` : ""}${chipsHtml}${t.sem_envio ? `<span class="alerta-envio" title="Nenhum e-mail enviado sobre esta notificação">${ic("error", "sm")}</span>` : ""}
-          <span class="subj"><span class="subj-t">${esc(t.subject)}</span><span class="snip"> - ${esc(t.snippet)}</span></span></div>
+        <div class="line1">${novoChip}${pendChip}${t.resgatado ? `<span class="chip spam" title="Estava no spam do Gmail e foi trazida para cá (${t.resgatado === "cliente" ? "remetente conhecido" : "parece notificação judicial"}). Confira o remetente.">${ic("report", "sm")}Veio do spam</span>` : ""}${t.notificacao ? `<span class="chip notif" title="Notificação judicial">${ic("gavel", "sm")}${esc(t.notificacao)}</span>` : ""}${chipsHtml}${t.sem_envio ? `<span class="alerta-envio" title="Nenhum e-mail enviado sobre esta notificação">${ic("error", "sm")}</span>` : ""}
+          <span class="subj"><span class="subj-t">${realce(t.subject, pal)}</span><span class="snip"> - ${realce(t.snippet, pal)}</span></span></div>
         ${atts ? `<div class="att-chips">${atts}</div>` : ""}
       </div>
       ${t.unread_gmail ? `<span class="gm" title="Ainda não lida no Gmail (status preservado para a controladoria)">${ic("mark_email_unread", "sm")}</span>` : ""}
@@ -336,6 +411,14 @@ async function openThread(account, threadId) {
   refreshStatus();
 }
 
+function pendBanner(d) {
+  const p = d.pendencia;
+  if (p && p.status !== "concluida") {
+    return `<div class="pend-banner ${p.status}">${ic(p.status === "em_execucao" ? "pending" : "reply", "sm")}<span><b>${p.status === "em_execucao" ? "Tratativa em execução" : "Pergunta do cliente sem resposta"}</b>${p.dias_espera ? ` · há ${p.dias_espera} dia(s)` : ""}${p.trecho ? ` — “${esc(p.trecho)}”` : ""}${p.nota ? ` <i>(${esc(p.nota)})</i>` : ""}</span>
+      <span class="spacer"></span>${p.status === "pendente" ? `<button class="link-btn" data-pend="em_execucao">Em execução</button>` : `<button class="link-btn" data-pend="pendente">Voltar a pendente</button>`}<button class="link-btn" data-pend="concluida">Concluir</button></div>`;
+  }
+  return "";
+}
 function renderThreadView() {
   const d = state.current, v = $("#thread-view"), msgs = d.messages;
   const notif = msgs.find(m => m.tipo === "TRIBUNAL");
@@ -350,9 +433,11 @@ function renderThreadView() {
       <button class="icon-btn" id="tv-unread" title="Marcar como não lida (somente no MarquesPro)">${ic("mark_email_unread")}</button>
       <div class="dropdown"><button class="icon-btn" id="tv-labels-btn" title="Marcadores">${ic("label")}</button><div class="menu hidden" id="tv-label-menu"></div></div>
       ${anuncio ? `<button class="tool-btn" id="tv-triagem" data-v="inbox">${ic("inbox", "sm")} Não é anúncio</button>` : `<button class="icon-btn" id="tv-triagem" data-v="anuncio" title="Marcar como anúncio (some da caixa de entrada; o Gmail não é alterado)">${ic("campaign")}</button>`}
+      ${!(d.pendencia && d.pendencia.status !== "concluida") ? `<button class="icon-btn" id="tv-marcar-pend" title="Marcar como pendência (acompanhar até responder)">${ic("pending_actions")}</button>` : ""}
       <span class="local-note" title="Abrir aqui não marca a mensagem como lida no Gmail (${esc(d.account)})">${ic("visibility", "sm")}</span>
     </div>
     ${spamInfo ? `<div class="spam-banner">${ic("report")}<div><b>Esta conversa estava no spam do Gmail.</b> Foi trazida para a caixa de entrada porque ${spamInfo === "cliente" ? "o remetente é conhecido (já trocamos mensagens)" : "parece uma notificação judicial"}. Confira o remetente antes de abrir links ou anexos.</div><button class="btn" id="tv-nao-spam">Não é spam</button></div>` : ""}
+    ${pendBanner(d)}
     ${d.sem_envio ? `<div class="envio-aviso">${ic("error", "sm")}<span>Nenhum e-mail enviado sobre esta notificação.</span><button class="link-btn" id="tv-escrever">Escrever e-mail ao cliente</button></div>` : ""}
     <div class="tv-head">
       <h2 class="tv-subject">${esc(msgs[0].subject)}${notif ? `<span class="chip notif">${ic("gavel", "sm")}${esc(notif.subtipo || "Notificação")}</span>` : ""}<span id="tv-labels">${labelChips}</span></h2>
@@ -376,6 +461,16 @@ function renderThreadView() {
     await abrirPainel("ia", "");
     executarIA();
   });
+  const setPend = async (status, nota) => {
+    await api(`/api/pendencias/${encodeURIComponent(d.account)}/${d.thread_id}`, {body: {status, nota: nota || "", message_id: d.pendencia ? d.pendencia.message_id : undefined}});
+    await openThread(d.account, d.thread_id); toast(status === "concluida" ? "Tratativa concluída." : "Tratativa atualizada.");
+  };
+  $$("[data-pend]", v).forEach(b => b.onclick = guard(async () => {
+    let nota = d.pendencia ? d.pendencia.nota : "";
+    if (b.dataset.pend !== "pendente") { const r = prompt(b.dataset.pend === "concluida" ? "Como foi resolvido? (opcional)" : "O que está sendo feito? (opcional)", nota); if (r === null) return; nota = r; }
+    await setPend(b.dataset.pend, nota);
+  }));
+  if ($("#tv-marcar-pend")) $("#tv-marcar-pend").onclick = guard(async () => { const r = prompt("Lembrete da pendência (opcional)", ""); if (r === null) return; await setPend("pendente", r); });
   if ($("#tv-nao-spam")) $("#tv-nao-spam").onclick = guard(async () => {
     await api(`/api/threads/${encodeURIComponent(d.account)}/${d.thread_id}/nao-spam`, {method: "POST"});
     toast("Conversa devolvida à caixa de entrada também no Gmail."); await openThread(d.account, d.thread_id);
@@ -944,6 +1039,11 @@ function renderCounterPop() {
     <div class="kv"><span>Ainda não abertas no MarquesPro (todas as datas)</span><b>${n.pendentes}</b></div>
     ${n.por_tipo.map(t => `<div class="kv"><span>${esc(t.nome)}</span><b>${t.n}</b></div>`).join("")}
     <div class="row"><button class="btn primary" id="pop-ver-notif">Ver notificações</button></div>
+    <h4>Atenção</h4>
+    <div class="kv"><span>Novos hoje (fora da cadeia)</span><b>${s.novos_hoje || 0}</b></div>
+    <div class="kv"><span>Clientes sem resposta</span><b>${s.pendencias ? s.pendencias.abertas : 0}</b></div>
+    <div class="kv"><span>Tratativas em execução</span><b>${s.pendencias ? s.pendencias.em_execucao : 0}</b></div>
+    <div class="row"><button class="btn" id="pop-ver-pend">Ver pendências</button></div>
     <h4>E-mails de hoje</h4>
     <div class="kv"><span>Recebidos na caixa de entrada</span><b>${s.recebidas_hoje}</b></div>
     <div class="kv"><span>Novos desde que o sistema abriu</span><b>${s.notificacoes_hoje}</b></div>
@@ -954,6 +1054,7 @@ function renderCounterPop() {
   $("#pop-ver-notif").onclick = guard(async () => {
     $("#counter-pop").classList.add("hidden"); state.folder = {id: "NOTIF"}; state.grupo = ""; state.search = ""; state.offset = 0; renderSidebar(); await loadThreads();
   });
+  $("#pop-ver-pend").onclick = guard(async () => { $("#counter-pop").classList.add("hidden"); state.folder = {id: "PEND"}; state.search = ""; state.offset = 0; renderSidebar(); await loadThreads(); });
   $$("#counter-pop .nt").forEach(x => x.onclick = guard(() => { $("#counter-pop").classList.add("hidden"); return openThread(x.dataset.acc, x.dataset.tid); }));
 }
 
@@ -975,6 +1076,7 @@ function renderGeneral() {
   $("#ocultar-anuncios").checked = state.settings.ocultar_anuncios !== "0";
   $("#ia-ler-imagens").checked = state.settings.ia_ler_imagens_auto !== "0";
   $("#prazo-interno-dias").value = state.settings.prazo_interno_dias || "";
+  $("#palavras-destaque").value = state.settings.palavras_destaque || "";
 }
 function renderAccounts() {
   $("#acc-list").innerHTML = state.accounts.map(a => `<div class="card"><b>${esc(a.email)}</b>
@@ -1056,7 +1158,7 @@ function bind() {
   $("#folders").onclick = guard(async (e) => {
     if (e.target.closest("li[data-mais]")) { state.maisPastas = !state.maisPastas; renderSidebar(); return; }
     const li = e.target.closest("li[data-folder]"); if (!li) return;
-    state.folder = {id: li.dataset.folder}; state.grupo = "";
+    state.folder = {id: li.dataset.folder}; state.grupo = ""; state.novos = false;
     state.search = ""; $("#search-input").value = ""; state.offset = 0;
     if (innerWidth < 760) $("#sidebar").classList.remove("open");
     renderSidebar(); await loadThreads();
@@ -1232,6 +1334,10 @@ function bind() {
     await refreshStatus(); await loadThreads();
   });
   $("#ia-ler-imagens").onchange = guard(async (e) => { state.settings = await api("/api/settings", {body: {ia_ler_imagens_auto: e.target.checked}}); });
+  $("#palavras-destaque").onchange = guard(async (e) => {
+    state.settings = await api("/api/settings", {body: {palavras_destaque: e.target.value}});
+    toast("Palavras em destaque atualizadas."); await loadThreads();
+  });
   $("#prazo-interno-dias").onchange = guard(async (e) => {
     state.settings = await api("/api/settings", {body: {prazo_interno_dias: e.target.value}});
     toast(e.target.value ? `Prazo interno: ${e.target.value} dia(s) útil(eis) antes da data.` : "Prazo interno será preenchido manualmente.");

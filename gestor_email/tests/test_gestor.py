@@ -510,6 +510,67 @@ class GestorTest(unittest.TestCase):
         self.assertEqual(por()["Citação"], False)
         self.assertFalse(self.get(f"/api/threads/{ME}/{self.g.msg_store[b]['threadId']}")["sem_envio"])
 
+    def test_novos_do_dia_palavras_e_pendencias(self):
+        dia = 86400 * 1000
+        import time
+        agora = int(time.time() * 1000)
+        # fora da cadeia: conversa nova de cliente hoje
+        n = self.g.add_message("Cliente Novo <novo@cliente.com>", "Preciso de ajuda com rescisão", "Boa tarde, posso ser atendido?", date_ms=agora)
+        # conversa antiga que recebeu resposta hoje: não é nova
+        ant = self.g.add_message("Cliente Antigo <antigo@cliente.com>", "Assunto antigo", "Olá", date_ms=agora - 5 * dia)
+        self.g.add_message("Cliente Antigo <antigo@cliente.com>", "Re: Assunto antigo", "Segue mais um dado", thread_id=self.g.msg_store[ant]["threadId"], date_ms=agora)
+        # palavras em destaque (cliente falando de intimação)
+        o = self.g.add_message("Outro <outro@cliente.com>", "Recebi uma notificação do tribunal", "Fui intimado hoje", date_ms=agora)
+        # pergunta sem resposta há 3 dias
+        q = self.g.add_message("Dona Maria <maria@cliente.com>", "Valor do acordo", "Qual o valor do acordo proposto?", date_ms=agora - 3 * dia)
+        # pergunta respondida pelo escritório
+        r = self.g.add_message("Seu José <jose@cliente.com>", "Data da audiência", "Quando será a audiência?", date_ms=agora - 2 * dia)
+        self.g.add_message(f"Dr. <{ME}>", "Re: Data da audiência", "Será dia 10.", labels=("SENT",), to="jose@cliente.com",
+                           thread_id=self.g.msg_store[r]["threadId"], date_ms=agora - dia)
+        # anúncio com pergunta não vira pendência
+        self.g.add_message("Loja <loja@promo.com>", "Quer economizar?", "Você quer 50% de desconto?", date_ms=agora - dia,
+                           extra_headers=[{"name": "List-Unsubscribe", "value": "<mailto:x@y.com>"}])
+        sync.sync_account(ME)
+        lista = {t["subject"]: t for t in self.get("/api/threads?label=INBOX")}
+        self.assertTrue(lista["Preciso de ajuda com rescisão"]["novo"])
+        self.assertFalse(lista["Assunto antigo"]["novo"])
+        self.assertEqual(self.get("/api/status")["novos_hoje"], 2)
+        self.assertEqual([t["subject"] for t in self.get("/api/threads?label=INBOX&novos=1")].sort(), 
+                         ["Preciso de ajuda com rescisão", "Recebi uma notificação do tribunal"].sort())
+        self.assertIn("notificação", lista["Recebi uma notificação do tribunal"]["palavras"])
+        self.assertIn("intimação", lista["Recebi uma notificação do tribunal"]["palavras"] + ["intimação"])
+        # pendências: só a pergunta sem resposta
+        pend = self.get("/api/pendencias")
+        assuntos = {p["assunto"]: p for p in pend if p["status"] != "concluida"}
+        self.assertIn("Valor do acordo", assuntos)
+        self.assertNotIn("Data da audiência", assuntos)
+        self.assertNotIn("Quer economizar?", assuntos)
+        self.assertGreaterEqual(assuntos["Valor do acordo"]["dias_espera"], 3)
+        self.assertEqual(lista["Valor do acordo"]["pendencia"]["status"], "pendente")
+        tid = self.g.msg_store[q]["threadId"]
+        # em execução, depois concluir manualmente
+        self.post(f"/api/pendencias/{ME}/{tid}", json={"status": "em_execucao", "nota": "Aguardando cálculo"})
+        p = [x for x in self.get("/api/pendencias") if x["thread_id"] == tid][0]
+        self.assertEqual((p["status"], p["nota"]), ("em_execucao", "Aguardando cálculo"))
+        self.assertEqual(self.get("/api/status")["pendencias"]["em_execucao"], 1)
+        self.post(f"/api/pendencias/{ME}/{tid}", json={"status": "concluida", "nota": "Resolvido por telefone"})
+        p = [x for x in self.get("/api/pendencias") if x["thread_id"] == tid][0]
+        self.assertEqual((p["status"], p["concluido_por"]), ("concluida", "manual"))
+        self.assertEqual(self.get("/api/status")["pendencias"]["abertas"], 1)  # sobra só a pergunta do cliente novo
+        # nova pergunta do cliente na mesma conversa reabre
+        self.g.add_message("Dona Maria <maria@cliente.com>", "Re: Valor do acordo", "E se eu parcelar? Pode me informar?", thread_id=tid, date_ms=agora)
+        sync.sync_account(ME)
+        self.assertEqual(self.get("/api/status")["pendencias"]["abertas"], 2)
+        # responder pela ferramenta conclui sozinho
+        ultimo = [m for m in self.g.msg_store.values() if m["threadId"] == tid][-1]["id"]
+        self.post("/api/send", data={"account": ME, "to": "maria@cliente.com", "subject": "Re: Valor do acordo", "html": "Sim",
+                                     "mode": "responder", "ref_message_id": ultimo})
+        self.assertEqual(self.get("/api/status")["pendencias"]["abertas"], 1)
+        # marcação manual em conversa sem pergunta
+        self.post(f"/api/pendencias/{ME}/{self.g.msg_store[o]['threadId']}", json={"status": "pendente", "nota": "Retornar ligação"})
+        self.assertEqual(self.get("/api/status")["pendencias"]["abertas"], 2)
+        self.assertEqual(self.client.post(f"/api/pendencias/{ME}/{tid}", headers=self.h, json={"status": "x"}).status_code, 400)
+
     def test_prazo_interno_pela_regra_configurada(self):
         n = self._cnj()
         texto = f"Audiência una presencial dia 15/12/2026 às 9h30, processo {n}. Reclamante: Fulano de Tal Reclamada: Empresa Exemplo Ltda."

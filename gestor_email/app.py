@@ -16,7 +16,7 @@ from typing import Any, Dict, List, Optional
 from flask import Flask, Response, abort, jsonify, request, send_from_directory
 from googleapiclient.errors import HttpError
 
-from . import auth, config, db, gmail_ops, ia, modelos, sync, triagem
+from . import auth, config, db, gmail_ops, ia, modelos, pendencias, sync, triagem
 
 INLINE_IMAGE_TYPES = {"image/png", "image/jpeg", "image/gif", "image/webp", "image/bmp"}
 
@@ -193,13 +193,17 @@ def create_app() -> Flask:
                 params.extend([like] * 4)
 
         read = _read_sql("t.account", "t.thread_id")
+        hoje_ms = pendencias.inicio_do_dia_ms()
+        novo_cond = "EXISTS (SELECT 1 FROM messages m WHERE m.account=t.account AND m.thread_id=t.thread_id AND " + pendencias.novo_sql("m") + ")"
         ordem = "t.last_date DESC"
+        params_ordem: List[Any] = []
         if request.args.get("prioridade") == "1":
             # Prioridade: intimação/citação não aberta > outra notificação não aberta > não lidas > lidas; depois, mais recentes
             trib = ("EXISTS (SELECT 1 FROM messages mp WHERE mp.account=t.account AND mp.thread_id=t.thread_id "
                     "AND mp.tipo='TRIBUNAL'{})")
-            ordem = (f"CASE WHEN {read} THEN 3 WHEN {trib.format(' AND mp.subtipo IN (' + chr(39) + 'Intimação' + chr(39) + ',' + chr(39) + 'Citação' + chr(39) + ')')} "
-                     f"THEN 0 WHEN {trib.format('')} THEN 1 ELSE 2 END, t.last_date DESC")
+            ordem = (f"CASE WHEN {read} THEN 4 WHEN {trib.format(' AND mp.subtipo IN (' + chr(39) + 'Intimação' + chr(39) + ',' + chr(39) + 'Citação' + chr(39) + ')')} "
+                     f"THEN 0 WHEN {trib.format('')} THEN 1 WHEN {novo_cond} THEN 2 ELSE 3 END, t.last_date DESC")
+            params_ordem = [hoje_ms]
         base = f"""
             WITH matched AS (
                 SELECT m.account, m.thread_id, MAX(m.internal_date) AS last_date
@@ -221,8 +225,12 @@ def create_app() -> Flask:
                     conds.append(f"t.last_date <= {ate}")
             else:
                 conds.append(f"t.last_date < {desde}")
+        params_cond: List[Any] = []
+        if request.args.get("novos") == "1":
+            conds.append(novo_cond)
+            params_cond.append(hoje_ms)
         flt = ("WHERE " + " AND ".join(conds)) if conds else ""
-        total = db.one(f"{base} SELECT COUNT(*) AS n FROM matched t {flt}", params)["n"]
+        total = db.one(f"{base} SELECT COUNT(*) AS n FROM matched t {flt}", params + params_cond)["n"]
         sql = f"""{base}
             SELECT t.account, t.thread_id, t.last_date,
                    (SELECT COUNT(*) FROM messages c WHERE c.account=t.account AND c.thread_id=t.thread_id) AS count,
@@ -230,7 +238,10 @@ def create_app() -> Flask:
             FROM matched t {flt}
             ORDER BY {ordem} LIMIT ? OFFSET ?
         """
-        result = [_thread_summary(t) for t in db.rows(sql, params + [limit, offset])]
+        # ordem vem antes do LIMIT; os marcadores "?" seguem a ordem em que aparecem no SQL
+        pend = {k: v for k, v in ((( i["account"], i["thread_id"]), i) for i in pendencias.listar(account)) if v["status"] != "concluida"}
+        palavras = pendencias.palavras_configuradas()
+        result = [_thread_summary(t, pend, palavras, hoje_ms) for t in db.rows(sql, params + params_cond + params_ordem + [limit, offset])]
         resp = jsonify(result)
         resp.headers["X-Total-Count"] = str(total)
         return resp
@@ -254,7 +265,8 @@ def create_app() -> Flask:
         db.execute("INSERT OR IGNORE INTO local_read (account, thread_id) VALUES (?,?)", (account, thread_id))
         labels = sorted({l for m in msgs for l in m["label_ids"]})
         return jsonify({"account": account, "thread_id": thread_id, "messages": msgs, "label_ids": labels,
-                        "sem_envio": bool(_sem_envio(account, thread_id))})
+                        "sem_envio": bool(_sem_envio(account, thread_id)),
+                        "pendencia": next((i for i in pendencias.listar(account) if i["thread_id"] == thread_id), None)})
 
     @app.post("/api/threads/<account>/<thread_id>/lida")
     def mark_read_local(account, thread_id):
@@ -388,7 +400,12 @@ def create_app() -> Flask:
         notif_tipos = db.rows(
             f"SELECT COALESCE(m.subtipo,'Outras') AS nome, COUNT(*) AS n {notif_where} AND m.internal_date>=? "
             "GROUP BY nome ORDER BY n DESC", acc_params + [ms])
+        novos_hoje = db.one(
+            f"SELECT COUNT(*) AS n FROM messages m WHERE {pendencias.novo_sql('m')} AND {_caixa_sql()} {acc_sql}",
+            [ms] + acc_params)["n"]
         return jsonify({
+            "novos_hoje": novos_hoje,
+            "pendencias": pendencias.contar(account),
             "notificacoes": {"hoje": notif_hoje, "pendentes": notif_pend, "por_tipo": notif_tipos,
                              "pendentes_por_grupo": grupos},
             "recebidas_hoje": today,
@@ -512,6 +529,8 @@ def create_app() -> Flask:
             if ref_row:
                 db.execute("INSERT OR IGNORE INTO envios (account, thread_id, message_id) VALUES (?,?,?)",
                            (account, ref_row["thread_id"], sent["id"]))
+        if mode in ("responder", "responder_todos"):
+            pendencias.concluir_por_resposta(account, m["thread_id"])   # respondeu: encerra a tratativa pendente
         extra = json.loads(f.get("labels", "[]") or "[]")
         if extra:
             gmail_ops.add_message_labels(svc, account, sent["id"], extra)
@@ -667,6 +686,27 @@ def create_app() -> Flask:
         db.execute("DELETE FROM subgrupos WHERE id=?", (sid,))
         return jsonify({"ok": True})
 
+    # ─── Tratativas pendentes ─────────────────────────────────────────────
+
+    @app.get("/api/pendencias")
+    def pendencias_lista():
+        account = _account_param(required=False)
+        itens = pendencias.listar(account)
+        filtro = request.args.get("status")
+        if filtro:
+            itens = [i for i in itens if i["status"] == filtro]
+        return jsonify(itens)
+
+    @app.post("/api/pendencias/<account>/<thread_id>")
+    def pendencias_definir(account, thread_id):
+        account = _require_account(account)
+        b = request.json or {}
+        try:
+            pendencias.definir(account, thread_id, b.get("status", ""), (b.get("nota") or "")[:500], b.get("message_id"))
+        except ValueError as e:
+            return jsonify({"erro": str(e)}), 400
+        return jsonify({"ok": True, "contagem": pendencias.contar(account)})
+
     # ─── Preferências ─────────────────────────────────────────────────────
 
     @app.get("/api/settings")
@@ -682,6 +722,8 @@ def create_app() -> Flask:
                     if txt and not (txt.isdigit() and 1 <= int(txt) <= 60):
                         return jsonify({"erro": "Informe um número de dias úteis entre 1 e 60 (ou deixe vazio)."}), 400
                     db.set_setting(k, txt)
+                elif k == "palavras_destaque":
+                    db.set_setting(k, re.sub(r"\s+", " ", str(v or "")).strip()[:500])
                 else:
                     db.set_setting(k, "1" if v in (True, "1", 1) else "0")
             except ValueError:
@@ -871,9 +913,10 @@ def _read_sql(acc: str, tid: str) -> str:
     return f"({local} OR {gm})"
 
 
-def _thread_summary(t: Dict[str, Any]) -> Dict[str, Any]:
+def _thread_summary(t: Dict[str, Any], pend: Optional[Dict] = None, palavras: Optional[List[str]] = None,
+                    hoje_ms: Optional[int] = None) -> Dict[str, Any]:
     msgs = db.rows(
-        "SELECT id, from_name, from_email, subject, snippet, label_ids, internal_date, has_attachments, tipo, subtipo, triagem, body_json "
+        "SELECT id, from_name, from_email, subject, snippet, label_ids, internal_date, has_attachments, tipo, subtipo, triagem, body_json, bulk "
         "FROM messages WHERE account=? AND thread_id=? ORDER BY internal_date",
         (t["account"], t["thread_id"]))
     last = msgs[-1]
@@ -885,7 +928,15 @@ def _thread_summary(t: Dict[str, Any]) -> Dict[str, Any]:
             n = "eu"
         if n not in senders:
             senders.append(n)
+    pend = pend or {}
+    p = pend.get((t["account"], t["thread_id"]))
+    primeira = msgs[0]
+    novo = bool(hoje_ms and primeira["internal_date"] >= hoje_ms and "SENT" not in json.loads(primeira["label_ids"])
+                and not (primeira["tipo"] == "TRIBUNAL" and pendencias.remetente_oficial(primeira["from_email"])) and primeira["triagem"] != "anuncio" and not primeira["bulk"])
     return {
+        "novo": novo,
+        "palavras": pendencias.achar_palavras(f"{msgs[0]['subject'] or ''} {last['snippet'] or ''}", palavras),
+        "pendencia": ({"status": p["status"], "dias": p["dias_espera"], "trecho": p["trecho"]} if p else None),
         "account": t["account"],
         "thread_id": t["thread_id"],
         "last_date": t["last_date"],
