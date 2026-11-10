@@ -14,7 +14,7 @@ from typing import Any, Dict, List
 from flask import Flask, Response, abort, jsonify, request, send_from_directory
 from googleapiclient.errors import HttpError
 
-from . import auth, config, db, gmail_ops, sync
+from . import auth, config, db, gmail_ops, ia, modelos, sync
 
 INLINE_IMAGE_TYPES = {"image/png", "image/jpeg", "image/gif", "image/webp", "image/bmp"}
 
@@ -507,6 +507,59 @@ def create_app() -> Flask:
             "from_email": suggested, "attachments": m["body"].get("attachments", []),
             "label_ids": gmail_ops.protected_filter(m["label_ids"]),
         })
+
+    # ─── Modelos de e-mail do escritório e preenchimento por IA ───────────
+
+    @app.get("/api/modelos")
+    def modelos_lista():
+        return jsonify(modelos.carregar())
+
+    @app.get("/api/ia/status")
+    def ia_status():
+        return jsonify(ia.status())
+
+    @app.post("/api/ia/config")
+    def ia_config():
+        ia.salvar_chave((request.json or {}).get("api_key", ""))
+        return jsonify(ia.status())
+
+    @app.post("/api/ia/preencher")
+    def ia_preencher():
+        """Envia o documento/e-mail para a IA e devolve o e-mail preenchido (somente a pedido do usuário)."""
+        f = request.form
+        arquivos = [(fs.filename, fs.mimetype, fs.read()) for fs in request.files.getlist("arquivos") if fs.filename]
+        email_ref = None
+        account, ref_id = (f.get("account") or "").lower(), f.get("ref_message_id")
+        if ref_id and f.get("usar_email", "1") == "1":
+            account = _require_account(account)
+            r = db.one("SELECT * FROM messages WHERE account=? AND id=?", (account, ref_id))
+            if not r:
+                return jsonify({"erro": "Mensagem de referência não encontrada"}), 404
+            svc = auth.get_service(account)
+            m = db.decode_message(r)
+            if m["body"] is None:
+                m["body"] = gmail_ops.parse_body(gmail_ops.get_full(svc, ref_id))
+                db.save_body(account, ref_id, m["body"])
+            body = m["body"]
+            texto = body.get("text") or gmail_ops.html_to_text(body.get("html", ""))
+            email_ref = {"de": m["from_raw"], "para": m["to_raw"], "assunto": m["subject"], "texto": texto}
+            if f.get("usar_anexos", "1") == "1":
+                for a in body.get("attachments", []):
+                    if a["mime_type"] in ia.TIPOS_ACEITOS and a.get("size", 0) <= 15 * 1024 * 1024:
+                        arquivos.append((a["filename"], a["mime_type"], gmail_ops.get_attachment(svc, ref_id, a["attachment_id"])))
+        if not arquivos and not email_ref and not (f.get("instrucoes") or "").strip():
+            return jsonify({"erro": "Anexe um documento (PDF/imagem), use o e-mail aberto ou escreva as informações."}), 400
+        try:
+            out = ia.preencher(f.get("codigo", ""), f.get("instrucoes", ""), email_ref, arquivos)
+        except ValueError as e:
+            return jsonify({"erro": str(e)}), 400
+        except RuntimeError as e:
+            return jsonify({"erro": str(e)}), 400
+        except Exception as e:  # erros da API (chave inválida, limite etc.)
+            return jsonify({"erro": f"Falha ao consultar a IA: {getattr(e, 'message', None) or e}"}), 502
+        m = modelos.por_codigo(out["codigo"])
+        out["titulo"] = m["titulo"] if m else ""
+        return jsonify(out)
 
     # ─── Preferências ─────────────────────────────────────────────────────
 

@@ -430,7 +430,7 @@ function fromOptions(onlyAccount) {
 
 function openCompose(ctx = {}) {
   if (!state.accounts.length) { toast("Conecte uma conta primeiro", true); openSettings("tab-accounts"); return; }
-  Object.assign(compose, {mode: ctx.mode || "novo", account: ctx.account || "", ref: ctx.ref || null, files: [],
+  Object.assign(compose, {refSubject: ctx.subject || "", mode: ctx.mode || "novo", account: ctx.account || "", ref: ctx.ref || null, files: [],
     labels: ctx.labels || [], fwdAtts: ctx.attachments || []});
   const opts = fromOptions(ctx.account || "");
   const sel = $("#c-from");
@@ -463,7 +463,7 @@ function currentFrom() {
 function applySignature() {
   const {info, account} = currentFrom();
   const sig = $("#c-editor [data-sig]");
-  if (sig) sig.innerHTML = info && info.signature ? `<br>-- <br>${sanitizeHtml(info.signature)}` : "";
+  if (sig) sig.innerHTML = info && info.signature ? `<br>${sanitizeHtml(info.signature)}` : "";
   if (compose.account && compose.account !== account) compose.labels = [];
   compose.account = account;
   renderComposeLabels();
@@ -488,6 +488,9 @@ async function startReply(mode, account, messageId) {
 
 async function sendCompose() {
   const {account, email} = currentFrom();
+  if ($("#c-editor mark.ph") || /\[PREENCHER/.test($("#c-subject").value)) {
+    if (!confirm("Ainda há campos [PREENCHER] sem preencher no e-mail. Enviar mesmo assim?")) return;
+  }
   const fd = new FormData();
   fd.append("account", account); fd.append("from_email", email);
   fd.append("to", $("#c-to").value); fd.append("cc", $("#c-cc").value); fd.append("bcc", $("#c-bcc").value);
@@ -543,6 +546,195 @@ function setupAutocomplete(input) {
     else if (e.key === "Escape") box.classList.add("hidden");
   });
   input.addEventListener("blur", () => setTimeout(() => box.classList.add("hidden"), 150));
+}
+
+// ─── Modelos de e-mail do escritório e preenchimento por IA ─────────────
+const MOD = {lista: null, aba: "modelo", arquivos: [], ia: null, slashIdx: 0, slashItens: []};
+const ROTULOS = {PROCESSO: "Nº do processo", RECLAMANTE: "Reclamante", RECLAMADA: "Reclamada", DATA: "Data", HORARIO: "Horário",
+  MODALIDADE: "Modalidade (presencial, telepresencial, híbrida)", PERIODO: "Saudação (bom dia / boa tarde)", PRAZO_INTERNO: "Prazo interno para envio",
+  LINK: "Link", QUANTIDADE_TESTEMUNHAS: "Quantidade de testemunhas", NOME_CLIENTE: "Nome do cliente", TIPO_AUDIENCIA: "Tipo de audiência"};
+const rotulo = (c) => ROTULOS[c] || (c.charAt(0) + c.slice(1).toLowerCase().replace(/_/g, " "));
+const ehLongo = (c) => /^(LISTA_|FUNDAMENTOS|BLOCO_|DOCUMENTOS|DESCRICAO|MOTIVO|RESUMO)/.test(c);
+
+async function carregarModelos() {
+  if (!MOD.lista) MOD.lista = await api("/api/modelos");
+  return MOD.lista;
+}
+const modeloAtual = () => (MOD.lista || []).find(m => m.codigo === $("#mp-modelo").value);
+const ISO_BR = (v) => (/^\d{4}-\d{2}-\d{2}$/.test(v) ? v.split("-").reverse().join("/") : v);
+
+function preencherTexto(t, valores) {
+  return t.replace(/\{\{([A-Z0-9_]+)\}\}/g, (_, c) => ((valores[c] || "").trim() || `[PREENCHER: ${c}]`));
+}
+function montarEmail(m, valores, blocos) {
+  let corpo = m.corpo.replace(/\{\{(BLOCO_[A-Z0-9_]+)\}\}/g, (_, b) => { const sel = blocos[b]; return sel && sel.incluir ? sel.texto : ""; });
+  corpo = corpo.replace(/\n{3,}/g, "\n\n");
+  return {assunto: preencherTexto(m.assunto || "", valores), corpo: preencherTexto(corpo, valores)};
+}
+function textoParaHtml(t) {
+  return t.split(/\n\s*\n/).map(p => `<div>${esc(p).replace(/\n/g, "<br>").replace(/\[PREENCHER: ([^\]]+)\]/g, '<mark class="ph">[PREENCHER: $1]</mark>')}</div>`).join("<div><br></div>");
+}
+function inserirNoEditor(assunto, corpo) {
+  const ed = $("#c-editor");
+  ed.querySelectorAll("[data-modelo]").forEach(n => n.remove());
+  const box = document.createElement("div"); box.dataset.modelo = "";
+  box.innerHTML = textoParaHtml(corpo);
+  const first = ed.firstElementChild;
+  if (first && !("sig" in first.dataset) && !("quoted" in first.dataset) && first.textContent.trim() === "") first.remove();
+  ed.insertBefore(box, ed.querySelector("[data-sig]") || ed.firstChild);
+  if (assunto) { $("#c-subject").value = assunto; $("#compose-title").textContent = assunto; }
+  ed.focus();
+}
+
+function abrirPainel(aba, codigo) {
+  MOD.aba = aba || "modelo";
+  $("#slash-menu").classList.add("hidden");
+  carregarModelos().then(lista => {
+    const sel = $("#mp-modelo");
+    const grupos = {};
+    lista.forEach(m => (grupos[m.grupo || "Outros"] = grupos[m.grupo || "Outros"] || []).push(m));
+    sel.innerHTML = `<option value="">Automático (a IA escolhe o modelo)</option>` + Object.entries(grupos).map(([g, ms]) =>
+      `<optgroup label="${esc(g)}">${ms.map(m => `<option value="${m.codigo}">${m.codigo} — ${esc(m.titulo)}</option>`).join("")}</optgroup>`).join("");
+    sel.value = codigo || "";
+    $("#modelo-panel").classList.remove("hidden");
+    $("#mp-usar-email-row").classList.toggle("hidden", !compose.ref);
+    trocarAba(MOD.aba);
+  }).catch(e => toast(e.message, true));
+}
+function fecharPainel() { $("#modelo-panel").classList.add("hidden"); }
+function trocarAba(aba) {
+  MOD.aba = aba;
+  $$("[data-mtab]").forEach(b => b.classList.toggle("on", b.dataset.mtab === aba));
+  $("#mp-modelo-pane").classList.toggle("hidden", aba !== "modelo");
+  $("#mp-ia-pane").classList.toggle("hidden", aba !== "ia");
+  $("#mp-inserir").classList.toggle("hidden", aba !== "modelo");
+  if (aba === "modelo") renderFormModelo(); else renderIA();
+}
+
+function renderFormModelo() {
+  const pane = $("#mp-modelo-pane"), m = modeloAtual();
+  if (!m) { pane.innerHTML = `<p class="muted">Escolha um modelo acima, ou digite <b>/</b> no texto do e-mail para buscar pelo nome. Para a IA escolher e preencher sozinha, use a aba "Preencher com IA".</p>`; $("#mp-inserir").disabled = true; return; }
+  $("#mp-inserir").disabled = false;
+  const processo = ((compose.refSubject || "").match(/\d{7}-\d{2}\.\d{4}\.\d\.\d{2}\.\d{4}/) || [""])[0];
+  const campos = m.campos.map(c => {
+    const id = `mpc-${c}`;
+    if (c === "DATA") return `<label>${rotulo(c)}<input id="${id}" data-campo="${c}" type="date"></label>`;
+    if (c === "PROCESSO") return `<label class="wide">${rotulo(c)}<input id="${id}" data-campo="${c}" value="${esc(processo)}" placeholder="0000000-00.0000.0.00.0000"></label>`;
+    return ehLongo(c) ? `<label class="wide">${rotulo(c)}<textarea id="${id}" data-campo="${c}" rows="3"></textarea></label>`
+      : `<label>${rotulo(c)}<input id="${id}" data-campo="${c}"></label>`;
+  }).join("");
+  const blocos = Object.entries(m.blocos).map(([b, bl]) => {
+    const vazio = !bl.texto.trim();
+    return `<div class="mp-bloco" data-bloco="${b}">
+      <label class="tit"><input type="checkbox" data-incluir ${vazio || !bl.condicao ? "checked" : ""}> <span>${rotulo(b.replace(/^BLOCO_/, ""))}${bl.condicao ? `<div class="cond">${esc(bl.condicao)}</div>` : ""}</span></label>
+      <textarea data-bloco-texto aria-label="Texto do bloco" placeholder="${vazio ? "Escreva este trecho (o modelo não traz texto-base)." : ""}">${esc(bl.texto)}</textarea></div>`;
+  }).join("");
+  pane.innerHTML = `<div class="mp-campos">${campos || '<span class="muted">Este modelo não tem campos variáveis.</span>'}</div>${blocos}
+    ${m.regras ? `<details class="mp-regras"><summary>Orientações do modelo (não vão no e-mail)</summary>${esc(m.regras).replace(/\n/g, "<br>")}</details>` : ""}`;
+}
+function lerFormModelo() {
+  const valores = {};
+  $$("#mp-modelo-pane [data-campo]").forEach(i => { valores[i.dataset.campo] = i.type === "date" ? ISO_BR(i.value) : i.value; });
+  const blocos = {};
+  $$("#mp-modelo-pane [data-bloco]").forEach(d => { blocos[d.dataset.bloco] = {incluir: $("[data-incluir]", d).checked, texto: $("[data-bloco-texto]", d).value}; });
+  return {valores, blocos};
+}
+function inserirModelo() {
+  const m = modeloAtual(); if (!m) return;
+  const {valores, blocos} = lerFormModelo();
+  const r = montarEmail(m, valores, blocos);
+  inserirNoEditor(r.assunto, r.corpo);
+  fecharPainel();
+  const pend = (r.corpo.match(/\[PREENCHER: [^\]]+\]/g) || []).length;
+  toast(pend ? `Modelo ${m.codigo} inserido. ${pend} campo(s) a preencher, destacados em amarelo.` : `Modelo ${m.codigo} inserido.`);
+}
+
+async function renderIA() {
+  MOD.ia = await api("/api/ia/status");
+  $("#mp-ia-key").classList.toggle("hidden", MOD.ia.configurada);
+  $("#mp-ia-form").classList.toggle("hidden", !MOD.ia.configurada);
+  $("#mp-key-remover").classList.toggle("hidden", MOD.ia.origem !== "arquivo local");
+  renderArquivosIA();
+}
+function renderArquivosIA() {
+  $("#mp-arquivos-lista").innerHTML = MOD.arquivos.map((f, i) => `<span class="att-chip">${ic("description", "sm")}${esc(f.name)} <span class="ms sm x" data-i="${i}" title="Remover">close</span></span>`).join("");
+  $$("#mp-arquivos-lista .x").forEach(x => x.onclick = () => { MOD.arquivos.splice(+x.dataset.i, 1); renderArquivosIA(); });
+}
+function adicionarArquivosIA(files) {
+  for (const f of files) {
+    if (!/^(application\/pdf|image\/(png|jpeg|webp|gif))$/.test(f.type)) { toast(`Formato não aceito: ${f.name}. Use PDF, PNG ou JPG.`, true); continue; }
+    MOD.arquivos.push(f);
+  }
+  renderArquivosIA();
+}
+async function executarIA() {
+  const btn = $("#mp-ia-run"), res = $("#mp-ia-result");
+  const fd = new FormData();
+  fd.append("codigo", $("#mp-modelo").value);
+  fd.append("instrucoes", $("#mp-instrucoes").value);
+  if (compose.ref && $("#mp-usar-email").checked) { fd.append("account", compose.account); fd.append("ref_message_id", compose.ref); }
+  MOD.arquivos.forEach(f => fd.append("arquivos", f, f.name));
+  btn.disabled = true; $("#mp-status").textContent = "A IA está preenchendo o modelo…";
+  try {
+    const r = await api("/api/ia/preencher", {body: fd});
+    inserirNoEditor(r.assunto, r.corpo);
+    const aviso = [r.titulo ? `Modelo usado: ${r.codigo} — ${r.titulo}.` : "", r.pendencias.length ? `A preencher/conferir: ${r.pendencias.join("; ")}.` : "Nenhuma pendência apontada.", r.observacoes].filter(Boolean);
+    fecharPainel();
+    toast(aviso.join(" "));
+    MOD.arquivos = [];
+  } catch (e) { res.classList.remove("hidden"); res.textContent = e.message; }
+  finally { btn.disabled = false; $("#mp-status").textContent = ""; }
+}
+
+// Menu "/" para buscar modelos pelo nome ou código
+function filtrarModelos(q) {
+  q = q.trim().toLowerCase();
+  return (MOD.lista || []).filter(m => !q || `${m.codigo} ${m.titulo} ${m.grupo}`.toLowerCase().includes(q)).slice(0, 40);
+}
+function mostrarSlash(q) {
+  const menu = $("#slash-menu");
+  carregarModelos().then(() => {
+    MOD.slashItens = filtrarModelos(q); MOD.slashIdx = 0;
+    let ultimo = "";
+    menu.innerHTML = MOD.slashItens.length ? MOD.slashItens.map((m, i) => {
+      const g = m.grupo !== ultimo ? `<div class="grp">${esc(m.grupo)}</div>` : ""; ultimo = m.grupo;
+      return `${g}<div class="it ${i === 0 ? "on" : ""}" role="option" data-i="${i}"><span class="cod">${m.codigo}</span><span>${esc(m.titulo)}</span></div>`;
+    }).join("") : `<div class="vazio">Nenhum modelo encontrado para "${esc(q)}".</div>`;
+    menu.classList.remove("hidden");
+    $$(".it", menu).forEach(d => d.onmousedown = (e) => { e.preventDefault(); escolherSlash(+d.dataset.i); });
+  }).catch(() => {});
+}
+function escolherSlash(i) {
+  const m = MOD.slashItens[i]; if (!m) return;
+  limparGatilhoSlash();
+  abrirPainel("modelo", m.codigo);
+}
+function limparGatilhoSlash() {
+  const sub = $("#c-subject");
+  if (sub.value.startsWith("/")) { sub.value = ""; $("#compose-title").textContent = "Nova mensagem"; }
+  const sel = getSelection();
+  if (sel.rangeCount && $("#c-editor").contains(sel.anchorNode) && sel.anchorNode.nodeType === 3) {
+    const n = sel.anchorNode, antes = n.textContent.slice(0, sel.anchorOffset), m = antes.match(/(^|\s)\/[^\s/]*$/);
+    if (m) { const ini = antes.length - m[0].length + m[1].length; n.textContent = n.textContent.slice(0, ini) + n.textContent.slice(sel.anchorOffset); const r = document.createRange(); r.setStart(n, ini); r.collapse(true); sel.removeAllRanges(); sel.addRange(r); }
+  }
+}
+function gatilhoSlashNoEditor() {
+  const sel = getSelection();
+  if (!sel.rangeCount || !$("#c-editor").contains(sel.anchorNode) || sel.anchorNode.nodeType !== 3) return null;
+  const antes = sel.anchorNode.textContent.slice(0, sel.anchorOffset);
+  const m = antes.match(/(^|\s)\/([^\s/]{0,30})$/);
+  return m ? m[2] : null;
+}
+function teclaSlash(e) {
+  const menu = $("#slash-menu");
+  if (menu.classList.contains("hidden")) return;
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    e.preventDefault(); const n = MOD.slashItens.length || 1;
+    MOD.slashIdx = (MOD.slashIdx + (e.key === "ArrowDown" ? 1 : -1) + n) % n;
+    $$(".it", menu).forEach((d, i) => d.classList.toggle("on", i === MOD.slashIdx));
+    const on = $(".it.on", menu); if (on) on.scrollIntoView({block: "nearest"});
+  } else if (e.key === "Enter" || e.key === "Tab") { if (MOD.slashItens.length) { e.preventDefault(); escolherSlash(MOD.slashIdx); } }
+  else if (e.key === "Escape") { e.preventDefault(); menu.classList.add("hidden"); }
 }
 
 // ─── Contadores e notificações ───────────────────────────────────────────
@@ -629,13 +821,19 @@ function renderSignatures() {
     <div id="sigp-${i}"></div>
     <label class="radio"><input type="checkbox" data-use="${i}" ${s.use_local ? "checked" : ""}> <span>Usar assinatura local (HTML) em vez da do Gmail</span></label>
     <textarea data-loc="${i}" placeholder="Assinatura local (opcional)" aria-label="Assinatura local">${esc(s.local_signature || "")}</textarea>
-    <div class="row"><button class="btn" data-save="${i}">Salvar</button></div></div>`).join("") || `<p class="muted">Nenhum remetente carregado. Clique em "Atualizar do Gmail".</p>`;
+    <div class="row"><button class="btn" data-save="${i}">Salvar</button><button class="btn" data-logo="${i}" title="Preenche a assinatura local com a logo do escritório">Modelo do escritório com logo</button></div></div>`).join("") || `<p class="muted">Nenhum remetente carregado. Clique em "Atualizar do Gmail".</p>`;
   state.sendAs.forEach((s, i) => {
     const fr = document.createElement("iframe");
     fr.setAttribute("sandbox", ""); fr.style.cssText = "width:100%;border:1px dashed #e0e0e0;border-radius:4px;height:110px";
     fr.srcdoc = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data: https:"><div style="font:14px Arial,sans-serif">` +
       (s.api_signature || "<i style='color:#888'>Nenhuma assinatura cadastrada no Gmail</i>") + "</div>";
     $(`#sigp-${i}`).appendChild(fr);
+  });
+  $$("[data-logo]").forEach(b => b.onclick = () => {
+    const i = +b.dataset.logo, s = state.sendAs[i];
+    $(`[data-loc="${i}"]`).value = `<table style="font-family:Arial,sans-serif;font-size:13px;color:#333;border-collapse:collapse"><tr><td style="padding-right:12px;vertical-align:middle"><img src="/static/logo-m-dourado.png" width="86" alt="Marques Advogados"></td><td style="border-left:2px solid #8C5818;padding-left:12px;vertical-align:middle"><b>${esc(s.display_name || "")}</b><br>Marques Advogados S/S<br>${esc(s.email)}</td></tr></table>`;
+    $(`[data-use="${i}"]`).checked = true;
+    toast("Modelo com logo preenchido. Edite o texto se precisar e clique em Salvar.");
   });
   $$("[data-save]").forEach(b => b.onclick = guard(async () => {
     const i = +b.dataset.save, s = state.sendAs[i];
@@ -771,7 +969,7 @@ function bind() {
   $("#compose-min").onclick = (e) => { e.stopPropagation(); $("#compose").classList.toggle("min"); $("#compose").classList.remove("max"); };
   $("#compose-max").onclick = (e) => { e.stopPropagation(); $("#compose").classList.toggle("max"); $("#compose").classList.remove("min"); };
   $("#compose-head").onclick = () => $("#compose").classList.remove("min");
-  $("#c-subject").oninput = (e) => { $("#compose-title").textContent = e.target.value || "Nova mensagem"; };
+  $("#c-subject").addEventListener("input", (e) => { $("#compose-title").textContent = e.target.value.startsWith("/") ? "Nova mensagem" : (e.target.value || "Nova mensagem"); });
   $("#c-from").onchange = applySignature;
   $("#c-show-cc").onclick = (e) => { e.preventDefault(); $("#c-cc-row").classList.remove("hidden"); $("#c-bcc-row").classList.remove("hidden"); };
   $("#c-attach").onchange = (e) => { compose.files.push(...e.target.files); e.target.value = ""; renderComposeFiles(); };
@@ -788,6 +986,28 @@ function bind() {
     labelMenu($("#c-label-menu"), currentFrom().account, compose.labels, (add, remove, all) => { compose.labels = all; renderComposeLabels(); }, {applyText: "OK"});
   };
   ["#c-to", "#c-cc", "#c-bcc"].forEach(s => setupAutocomplete($(s)));
+
+  // Modelos e IA
+  $("#c-modelos").onclick = (e) => { e.stopPropagation(); abrirPainel("modelo", ""); };
+  $("#c-ia").onclick = (e) => { e.stopPropagation(); abrirPainel("ia", ""); };
+  $("#mp-close").onclick = $("#mp-cancelar").onclick = fecharPainel;
+  $$("[data-mtab]").forEach(b => b.onclick = () => trocarAba(b.dataset.mtab));
+  $("#mp-modelo").onchange = () => { if (MOD.aba === "modelo") renderFormModelo(); };
+  $("#mp-inserir").onclick = inserirModelo;
+  $("#mp-drop").onclick = () => $("#mp-arquivos").click();
+  $("#mp-arquivos").onchange = (e) => { adicionarArquivosIA(e.target.files); e.target.value = ""; };
+  ["dragover", "dragenter"].forEach(ev => $("#mp-drop").addEventListener(ev, (e) => { e.preventDefault(); $("#mp-drop").classList.add("over"); }));
+  ["dragleave", "drop"].forEach(ev => $("#mp-drop").addEventListener(ev, (e) => { e.preventDefault(); $("#mp-drop").classList.remove("over"); }));
+  $("#mp-drop").addEventListener("drop", (e) => adicionarArquivosIA(e.dataTransfer.files));
+  $("#mp-ia-run").onclick = guard(executarIA);
+  $("#mp-key-save").onclick = guard(async () => { await api("/api/ia/config", {body: {api_key: $("#mp-key").value}}); $("#mp-key").value = ""; await renderIA(); toast("Chave da IA salva neste computador."); });
+  $("#mp-key-remover").onclick = guard(async () => { if (!confirm("Remover a chave da IA deste computador?")) return; await api("/api/ia/config", {body: {api_key: ""}}); await renderIA(); });
+  // "/" no corpo do e-mail e no assunto abre o menu de modelos
+  $("#c-editor").addEventListener("input", () => { const q = gatilhoSlashNoEditor(); if (q === null) $("#slash-menu").classList.add("hidden"); else mostrarSlash(q); });
+  $("#c-editor").addEventListener("keydown", teclaSlash);
+  $("#c-editor").addEventListener("blur", () => setTimeout(() => $("#slash-menu").classList.add("hidden"), 150));
+  $("#c-subject").addEventListener("input", (e) => { if (e.target.value.startsWith("/")) mostrarSlash(e.target.value.slice(1)); else $("#slash-menu").classList.add("hidden"); });
+  $("#c-subject").addEventListener("keydown", teclaSlash);
 
   // Configurações
   $("#btn-settings").onclick = (e) => { e.stopPropagation(); openSettings(); };

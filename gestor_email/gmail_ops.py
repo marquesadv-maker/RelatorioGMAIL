@@ -10,6 +10,7 @@ import base64
 import html
 import io
 import mimetypes
+import os
 import re
 from email.message import EmailMessage
 from email.utils import formataddr, getaddresses, make_msgid, parseaddr, formatdate
@@ -274,6 +275,43 @@ def html_to_text(s: str) -> str:
     return re.sub(r"\n{3,}", "\n\n", s).strip()
 
 
+_IMG_SRC = re.compile(r'(<img\b[^>]*?\bsrc\s*=\s*)(["\'])(.*?)\2', re.I | re.S)
+_STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
+
+
+def extrair_imagens_inline(html_body: str) -> Tuple[str, List[Tuple[str, str, bytes]]]:
+    """Troca imagens embutidas (data:) e a logo local (/static/...) por anexos inline (cid:).
+
+    Assim a logo da assinatura aparece no destinatário sem depender de link externo.
+    Imagens https:// de assinaturas do Gmail são mantidas como estão.
+    """
+    imagens: List[Tuple[str, str, bytes]] = []
+
+    def troca(m):
+        prefixo, aspas, src = m.group(1), m.group(2), m.group(3).strip()
+        dados = mime = None
+        if src.lower().startswith("data:image/"):
+            try:
+                cab, b64 = src.split(",", 1)
+                mime = cab[5:].split(";")[0].lower()
+                dados = base64.b64decode(b64)
+            except Exception:
+                return m.group(0)
+        elif src.startswith("/static/"):
+            caminho = os.path.normpath(os.path.join(_STATIC_DIR, src[len("/static/"):].split("?")[0]))
+            if caminho.startswith(_STATIC_DIR + os.sep) and os.path.isfile(caminho):
+                mime = mimetypes.guess_type(caminho)[0] or "image/png"
+                with open(caminho, "rb") as f:
+                    dados = f.read()
+        if not dados or not mime or not mime.startswith("image/") or mime == "image/svg+xml":
+            return m.group(0)
+        cid = make_msgid(domain="marquespro.local")[1:-1]
+        imagens.append((cid, mime, dados))
+        return f"{prefixo}{aspas}cid:{cid}{aspas}"
+
+    return _IMG_SRC.sub(troca, html_body), imagens
+
+
 def _clean_addresses(value: str) -> str:
     pairs = [(n, e) for n, e in getaddresses([value or ""]) if e and "@" in e]
     return ", ".join(formataddr((n, e)) for n, e in pairs)
@@ -305,11 +343,17 @@ def build_mime(
     if in_reply_to:
         msg["In-Reply-To"] = in_reply_to
         msg["References"] = (references + " " + in_reply_to).strip() if in_reply_to not in references else references
+    html_body, inline = extrair_imagens_inline(html_body)
     msg.set_content(html_to_text(html_body) or " ")
     msg.add_alternative(
         f'<!DOCTYPE html><html><body style="font-family:Arial,sans-serif;font-size:14px">{html_body}</body></html>',
         subtype="html",
     )
+    if inline:
+        parte_html = msg.get_body(("html",))
+        for cid, mime, dados in inline:
+            tipo, _, sub = mime.partition("/")
+            parte_html.add_related(dados, maintype=tipo, subtype=sub, cid=f"<{cid}>")
     for filename, mime_type, data in attachments:
         maintype, _, subtype = (mime_type or mimetypes.guess_type(filename)[0]
                                 or "application/octet-stream").partition("/")

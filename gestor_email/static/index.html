@@ -103,8 +103,39 @@
     <button data-cmd="insertUnorderedList" title="Lista com marcadores"><span class="ms">format_list_bulleted</span></button>
     <button data-cmd="removeFormat" title="Remover formatação"><span class="ms">format_clear</span></button>
   </div>
+  <div class="slash-menu hidden" id="slash-menu" role="listbox" aria-label="Modelos de e-mail"></div>
+  <div class="modelo-panel hidden" id="modelo-panel">
+    <div class="mp-head">
+      <div class="mp-tabs"><button data-mtab="modelo" class="on">Modelo</button><button data-mtab="ia"><span class="ms sm">auto_awesome</span> Preencher com IA</button></div>
+      <button class="icon-btn tiny" id="mp-close" title="Fechar"><span class="ms">close</span></button>
+    </div>
+    <div class="mp-body">
+      <label class="mp-row"><span>Modelo</span><select id="mp-modelo"></select></label>
+      <div id="mp-modelo-pane"></div>
+      <div id="mp-ia-pane" class="hidden">
+        <p class="muted mp-aviso"><span class="ms sm">lock</span> Ao usar a IA, o texto e os arquivos enviados são processados pela API da Anthropic. Envie apenas o necessário para o preenchimento (LGPD) e confira o resultado antes de enviar.</p>
+        <div id="mp-ia-key" class="hidden">
+          <p>Para usar a IA, informe a chave da API da Anthropic. Ela fica salva somente neste computador.</p>
+          <div class="row"><input id="mp-key" type="password" placeholder="Chave da API (sk-ant-...)" autocomplete="off"><button class="btn primary" id="mp-key-save">Salvar chave</button></div>
+        </div>
+        <div id="mp-ia-form">
+          <label class="radio hidden" id="mp-usar-email-row"><input type="checkbox" id="mp-usar-email" checked> <span>Usar o e-mail aberto e seus anexos (PDF e imagens) como fonte</span></label>
+          <div class="mp-drop" id="mp-drop"><span class="ms">upload_file</span><span>Arraste aqui o PDF ou a imagem (intimação, sentença, ata, laudo) ou <u>escolha o arquivo</u></span>
+            <input type="file" id="mp-arquivos" accept="application/pdf,image/png,image/jpeg,image/webp,image/gif" multiple hidden></div>
+          <div id="mp-arquivos-lista" class="att-chips"></div>
+          <textarea id="mp-instrucoes" rows="6" placeholder="Ou cole aqui o texto da intimação/decisão, ou escreva o que precisa (ex.: &quot;avisar a empresa da audiência de conciliação&quot;)." aria-label="Texto ou instruções"></textarea>
+          <div class="row"><button class="btn primary" id="mp-ia-run"><span class="ms sm">auto_awesome</span> Preencher com IA</button><button class="link-btn" id="mp-key-remover">Remover chave</button></div>
+          <div id="mp-ia-result" class="hidden"></div>
+        </div>
+      </div>
+    </div>
+    <div class="mp-foot"><span class="hint" id="mp-status"></span><span class="spacer"></span>
+      <button class="btn" id="mp-cancelar">Cancelar</button><button class="btn primary" id="mp-inserir">Inserir no e-mail</button></div>
+  </div>
   <div class="compose-foot">
     <button class="send-btn" id="c-send">Enviar</button>
+    <button class="icon-btn" id="c-modelos" title="Modelos de e-mail (ou digite / no texto)"><span class="ms">description</span></button>
+    <button class="icon-btn" id="c-ia" title="Preencher o modelo com IA"><span class="ms">auto_awesome</span></button>
     <button class="icon-btn" id="c-format" title="Opções de formatação"><span class="ms">format_color_text</span></button>
     <label class="icon-btn" title="Anexar arquivos"><span class="ms">attach_file</span><input type="file" id="c-attach" multiple hidden></label>
     <button class="icon-btn" id="c-link" title="Inserir link"><span class="ms">link</span></button>

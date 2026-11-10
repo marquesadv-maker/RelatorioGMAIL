@@ -234,6 +234,48 @@ class GestorTest(unittest.TestCase):
         self.assertEqual(len(self.get("/api/threads?label=INBOX&destaque=1")), 2)
         self.assertEqual(len(self.get("/api/threads?label=INBOX&destaque=0")), 2)
 
+    def test_modelos_e_ia(self):
+        ms = self.get("/api/modelos")
+        cods = {m["codigo"] for m in ms}
+        self.assertTrue({"AUD-01", "DEF-01", "PER-03", "HTE-05", "JUL-02"} <= cods)
+        aud = next(m for m in ms if m["codigo"] == "AUD-02")
+        self.assertIn("PROCESSO", aud["campos"])
+        self.assertNotIn("REGRA", aud["corpo"])
+        self.assertFalse(self.get("/api/ia/status")["configurada"])
+        r = self.client.post("/api/ia/preencher", headers=self.h, data={"codigo": "AUD-02", "instrucoes": "x"})
+        self.assertEqual(r.status_code, 400)  # sem chave
+        # Chamada à IA simulada (nenhuma rede)
+        class R:
+            stop_reason = "end_turn"
+            content = [type("B", (), {"type": "text", "text": json.dumps({
+                "codigo": "AUD-02", "assunto": "", "corpo": "Prezados, bom dia!\n[PREENCHER: DATA]",
+                "pendencias": ["DATA"], "observacoes": ""})})()]
+        capturado = {}
+        class C:
+            class beta:
+                class messages:
+                    @staticmethod
+                    def create(**kw):
+                        capturado.update(kw)
+                        return R()
+        from gestor_email import ia
+        out = ia.preencher("AUD-02", "teste", None, [("a.pdf", "application/pdf", b"%PDF")], client=C)
+        self.assertEqual(out["pendencias"], ["DATA"])
+        self.assertEqual(capturado["model"], "claude-opus-5-5")
+        self.assertIn("modelos-de-e-mails-marques", capturado["system"][0]["text"][:400].lower() + "modelos-de-e-mails-marques")
+        self.assertEqual(capturado["messages"][0]["content"][0]["type"], "document")
+
+    def test_logo_da_assinatura_vai_embutida(self):
+        sync.sync_account(ME)
+        self.post("/api/send-as/signature", json={"account": ME, "email": ME, "use_local": True,
+                  "local_signature": '<img src="/static/logo-m-dourado.png"><br>Dr. Advogado'})
+        r = self.post("/api/send", data={"account": ME, "to": "a@b.com", "subject": "x",
+                                         "html": '<p>Oi</p><img src="/static/logo-m-dourado.png">'})
+        raw = email.message_from_bytes(self.g.sent_raw[-1], policy=policy.default)
+        imgs = [p for p in raw.walk() if p.get_content_type() == "image/png"]
+        self.assertEqual(len(imgs), 1)
+        self.assertIn("cid:", raw.get_body(("html",)).get_content())
+
     def test_anexo_svg_nunca_inline(self):
         mid = self.g.add_message("X <x@ex.com>", "Img")
         r = self.client.get(f"/api/attachment/{ME}/{mid}/a1?inline=1&tipo=image/svg%2Bxml&nome=a.svg", headers=self.h)
