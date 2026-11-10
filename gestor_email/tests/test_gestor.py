@@ -1,6 +1,7 @@
 import email
 import json
 import os
+import time
 import shutil
 import tempfile
 import unittest
@@ -570,6 +571,55 @@ class GestorTest(unittest.TestCase):
         self.post(f"/api/pendencias/{ME}/{self.g.msg_store[o]['threadId']}", json={"status": "pendente", "nota": "Retornar ligação"})
         self.assertEqual(self.get("/api/status")["pendencias"]["abertas"], 2)
         self.assertEqual(self.client.post(f"/api/pendencias/{ME}/{tid}", headers=self.h, json={"status": "x"}).status_code, 400)
+
+    def test_integridade_recupera_email_perdido_e_sinaliza_falhas(self):
+        from gestor_email import integridade
+        self.g.add_message("Cliente <c@ex.com>", "Primeiro")
+        sync.sync_account(ME)
+        self.assertEqual(self.get("/api/integridade")["nivel"], "atencao")   # ainda sem verificação cruzada
+        integridade.verificar(ME, 2)
+        self.assertEqual(self.get("/api/integridade")["nivel"], "ok")
+        # e-mail que chegou no Gmail mas o histórico "perdeu" (a sincronização incremental não vê)
+        perdido = self.g.add_message("Cliente <c@ex.com>", "Chegou mas ninguém avisou a API")
+        self.g.hist_store.pop()
+        sync.sync_account(ME)
+        self.assertFalse(db.message_exists(ME, perdido))
+        r = self.post("/api/integridade/verificar")
+        self.assertTrue(db.message_exists(ME, perdido))
+        self.assertEqual(r["resultados"][0]["recuperados"], 1)
+        est = self.get("/api/integridade")
+        self.assertEqual((est["nivel"], est["acao"]), ("atencao", "reconhecer"))
+        self.assertTrue(any(e["evento"] == "recuperado" for e in est["eventos"]))
+        self.assertEqual(self.get("/api/status")["integridade"]["nivel"], "atencao")
+        time.sleep(1.1)
+        self.post("/api/integridade/reconhecer")
+        self.assertEqual(self.get("/api/integridade")["nivel"], "ok")
+        # apagado no Gmail → sai do cache
+        self.g.msg_store.pop(perdido)
+        integridade.verificar(ME, 2)
+        self.assertFalse(db.message_exists(ME, perdido))
+
+        # falha de autorização: sinaliza na hora e pede para reconectar
+        with mock.patch.object(auth, "get_service", side_effect=Exception("invalid_grant: Token has been expired or revoked.")):
+            self.assertEqual(sync.sync_account(ME)["status"], "erro")
+        est = self.get("/api/integridade")
+        self.assertEqual((est["nivel"], est["acao"]), ("erro", "reconectar"))
+        self.assertIn("reconecte", est["mensagem"].lower())
+        # volta ao normal quando a sincronização se recupera
+        sync.sync_account(ME)
+        self.assertEqual(self.get("/api/integridade")["contas"][0]["falhas_seguidas"], 0)
+        # falhas repetidas de rede: 1 = atenção, 2 = erro
+        with mock.patch.object(auth, "get_service", side_effect=Exception("Connection reset by peer")):
+            sync.sync_account(ME)
+            self.assertEqual(self.get("/api/integridade")["nivel"], "atencao")
+            sync.sync_account(ME)
+        self.assertEqual(self.get("/api/integridade")["nivel"], "erro")
+        sync.sync_account(ME)
+        # sincronização parada (nada sincroniza há muito tempo) vira erro
+        db.set_account_state(ME, last_sync="2000-01-01 00:00:00")
+        est = self.get("/api/integridade")
+        self.assertEqual(est["nivel"], "erro")
+        self.assertIn("parada", est["mensagem"])
 
     def test_prazo_interno_pela_regra_configurada(self):
         n = self._cnj()

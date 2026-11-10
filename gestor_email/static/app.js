@@ -13,21 +13,16 @@ const ic = (name, cls = "") => `<span class="ms ${cls}">${name}</span>`;
 
 const FOLDERS = [
   {id: "INBOX", name: "Caixa de entrada", icon: "inbox"},
-  {id: "NOTIF", name: "Notificações judiciais", icon: "gavel"},
-  {id: "PEND", name: "Pendências", icon: "pending_actions"},
-  {id: "STARRED", name: "Com estrela", icon: "star"},
   {id: "SENT", name: "Enviados", icon: "send"},
-  {id: "IMPORTANT", name: "Importante", icon: "label_important", mais: true},
-  {id: "ALL", name: "Todos os e-mails", icon: "mail", mais: true},
-  {id: "ANUNCIOS", name: "Anúncios e promoções", icon: "campaign", mais: true},
 ];
-// Filtros rápidos de destaque (no lugar das abas Promoções/Social/Atualizações)
-const GRUPOS = [
-  {id: "", name: "Todas", icon: "inbox"},
-  {id: "intimacoes", name: "Intimações", icon: "gavel"},
-  {id: "citacoes", name: "Citações", icon: "assignment_ind"},
-  {id: "notificacoes", name: "Notificações", icon: "campaign"},
+// Pastas menos usadas: ficam no menu "Mais" da barra de atalhos, fora da lateral
+const OUTRAS_PASTAS = [
+  {id: "STARRED", name: "Com estrela", icon: "star"},
+  {id: "IMPORTANT", name: "Importante", icon: "label_important"},
+  {id: "ANUNCIOS", name: "Anúncios e promoções", icon: "campaign"},
+  {id: "ALL", name: "Todos os e-mails", icon: "mail"},
 ];
+
 
 const state = {
   novos: false, pendAba: "pendente",
@@ -183,17 +178,12 @@ function renderAccountMenu() {
 
 function renderSidebar() {
   const st = state.status || {};
-  const counts = {INBOX: st.nao_lidas_local || 0, NOTIF: st.notificacoes ? st.notificacoes.pendentes : 0,
-    PEND: st.pendencias ? st.pendencias.abertas + st.pendencias.em_execucao : 0};
+  const counts = {INBOX: st.nao_lidas_local || 0};
   const isFolder = (id) => state.folder.id === id && !state.folder.name;
-  const maisAtivo = FOLDERS.some(f => f.mais && isFolder(f.id));
-  const mostrarMais = state.maisPastas || maisAtivo;
-  $("#folders").innerHTML = FOLDERS.filter(f => !f.mais || mostrarMais).map(f => `
-    <li data-folder="${f.id}" class="${isFolder(f.id) ? "active" : ""} ${counts[f.id] ? "has-unread" : ""} ${f.id === "NOTIF" || f.id === "PEND" ? "notif" : ""}"
-      title="${f.id === "NOTIF" ? "Intimações, citações, publicações e demais avisos de tribunais (contador: não abertas no MarquesPro)" : esc(f.name)}">
+  $("#folders").innerHTML = FOLDERS.map(f => `
+    <li data-folder="${f.id}" class="${isFolder(f.id) ? "active" : ""} ${counts[f.id] ? "has-unread" : ""} " title="${esc(f.name)}">
       ${ic(f.icon, isFolder(f.id) ? "fill" : "")}<span class="name">${f.name}</span>
-      ${counts[f.id] ? `<span class="count">${counts[f.id]}</span>` : ""}</li>`).join("")
-    + `<li data-mais class="mais">${ic(mostrarMais ? "expand_less" : "expand_more")}<span class="name">${mostrarMais ? "Menos" : "Mais"}</span></li>`;
+      ${counts[f.id] ? `<span class="count">${counts[f.id]}</span>` : ""}</li>`).join("");
   const src = state.account ? userLabels(state.account) : state.labels.filter(l => l.type === "user");
   const byName = new Map();
   src.forEach(l => { if (!byName.has(l.name)) byName.set(l.name, l); });
@@ -212,38 +202,51 @@ function renderSidebar() {
 }
 
 function renderTabs() {
-  const show = ["INBOX", "NOTIF"].includes(state.folder.id) && !state.folder.name && !state.search;
-  if (state.folder.id !== "INBOX") state.novos = false;
+  const show = ["INBOX", "PEND"].includes(state.folder.id) && !state.folder.name && !state.search;
   const box = $("#tabs-inbox");
   box.classList.toggle("hidden", !show);
   if (!show) return;
-  const pend = (state.status && state.status.notificacoes && state.status.notificacoes.pendentes_por_grupo) || {};
+  if (state.folder.id !== "INBOX") state.novos = false;
+  const st = state.status || {}, pg = (st.notificacoes && st.notificacoes.pendentes_por_grupo) || {};
+  const judic = pg.judiciais || 0, nn = st.novos_hoje || 0, pn = st.pendencias ? st.pendencias.abertas + st.pendencias.em_execucao : 0;
+  const naCaixa = state.folder.id === "INBOX";
+  const detalhe = `Intimações não abertas: ${pg.intimacoes || 0} · Citações: ${pg.citacoes || 0} · Notificações: ${pg.notificacoes || 0}`;
+  const qb = (id, cls, icon, nome, n, on, tip) => `<button class="qbtn ${cls} ${on ? "on" : ""}" data-q="${id}" title="${esc(tip)}">
+      <span class="qic">${ic(icon)}</span><span class="qtx"><b>${nome}</b></span>${n ? `<span class="qn">${n}</span>` : ""}</button>`;
   const so = $("#only-unread").checked;
-  box.innerHTML = GRUPOS.filter(g => !g.id || pend[g.id] || state.grupo === g.id).map(g => `<button class="filter-chip ${state.grupo === g.id ? "on" : ""} ${g.id ? "hl" : ""}" data-grupo="${g.id}"
-      title="${g.id ? `${g.name} ainda não abertas no MarquesPro: ${pend[g.id] || 0}` : "Mostrar todas as conversas"}">
-    ${ic(state.grupo === g.id ? "check" : g.icon, "sm")}<span>${g.name}</span>${g.id && pend[g.id] ? `<b class="n">${pend[g.id]}</b>` : ""}</button>`).join("");
-  if (state.folder.id === "INBOX") {
-    const nn = (state.status && state.status.novos_hoje) || 0;
-    box.insertAdjacentHTML("beforeend", `<button class="filter-chip novo ${state.novos ? "on" : ""}" data-novos title="E-mails novos de hoje, fora da cadeia de conversas (primeiro contato do dia)">${ic(state.novos ? "check" : "fiber_new", "sm")}<span>Novos hoje</span>${nn ? `<b class="n">${nn}</b>` : ""}</button>`);
-  }
-  box.insertAdjacentHTML("beforeend", `<button class="filter-chip ${so ? "on" : ""}" data-unread title="Mostrar só conversas não lidas no MarquesPro">${ic(so ? "check" : "mark_email_unread", "sm")}<span>Não lidas</span></button>`);
-  $$("button[data-grupo], button[data-unread], button[data-novos]", box).forEach(b => b.onclick = guard(async () => {
-    if ("novos" in b.dataset) state.novos = !state.novos;
-    else if ("unread" in b.dataset) $("#only-unread").checked = !$("#only-unread").checked; else { state.grupo = b.dataset.grupo; state.novos = false; }
-    state.offset = 0; await loadThreads();
+  box.innerHTML = `<div class="quick-bar">
+    ${qb("judiciais", "jud", "gavel", "Intimações · Citações · Notificações", judic, naCaixa && state.grupo === "judiciais", `Notificações judiciais ainda não abertas no MarquesPro. ${detalhe}`)}
+    ${qb("novos", "nov", "fiber_new", "Novos hoje", nn, naCaixa && state.novos, "Conversas novas de hoje, fora da cadeia de e-mails (primeiro contato do cliente no dia)")}
+    ${qb("pend", "pen", "pending_actions", "Pendências", pn, state.folder.id === "PEND", "Clientes que perguntaram e ainda não foram respondidos, e tratativas em execução")}
+    <span class="qsep"></span>
+    <button class="filter-chip ${so ? "on" : ""}" data-unread title="Mostrar só conversas não lidas no MarquesPro">${ic(so ? "check" : "mark_email_unread", "sm")}<span>Não lidas</span></button>
+    ${naCaixa ? `<div class="dropdown periodo"><button class="filter-chip" id="btn-periodo" title="Período dos Destaques">${ic("date_range", "sm")}<span>Destaques: ${esc(janelaPeriodo().rotulo)}</span>${ic("arrow_drop_down", "sm")}</button><div class="menu hidden" id="menu-periodo"></div></div>` : ""}
+    <div class="dropdown"><button class="filter-chip" id="btn-mais-pastas" title="Outras pastas">${ic("more_horiz", "sm")}<span>Mais</span></button><div class="menu hidden" id="menu-mais-pastas">${OUTRAS_PASTAS.map(f => `<div class="mi" data-pasta="${f.id}">${ic(f.icon, "sm")}${f.name}</div>`).join("")}</div></div>
+  </div>`;
+  $$("button[data-q]", box).forEach(b => b.onclick = guard(async () => {
+    const q = b.dataset.q;
+    if (q === "pend") { state.folder = {id: "PEND"}; state.novos = false; state.grupo = ""; }
+    else {
+      const jaNaCaixa = state.folder.id === "INBOX";
+      state.folder = {id: "INBOX"};
+      if (q === "judiciais") { state.grupo = jaNaCaixa && state.grupo === "judiciais" ? "" : "judiciais"; state.novos = false; }
+      else { state.novos = jaNaCaixa ? !state.novos : true; state.grupo = ""; }
+    }
+    state.offset = 0; renderSidebar(); await loadThreads();
   }));
-  if (state.folder.id === "INBOX") {
-    const jan = janelaPeriodo();
-    box.insertAdjacentHTML("beforeend", `<div class="dropdown periodo"><button class="filter-chip" id="btn-periodo" title="Período dos Destaques">${ic("date_range", "sm")}<span>Destaques: ${esc(jan.rotulo)}</span>${ic("arrow_drop_down", "sm")}</button><div class="menu hidden" id="menu-periodo"></div></div>`);
-    $("#btn-periodo").onclick = (e) => { e.stopPropagation(); menuPeriodo(); };
-  }
+  $("button[data-unread]", box).onclick = guard(async () => { $("#only-unread").checked = !$("#only-unread").checked; state.offset = 0; if (state.folder.id === "PEND") state.folder = {id: "INBOX"}; await loadThreads(); });
+  if (naCaixa) $("#btn-periodo").onclick = (e) => { e.stopPropagation(); menuPeriodo(); };
+  $("#btn-mais-pastas").onclick = (e) => { e.stopPropagation(); const m = $("#menu-mais-pastas"), hid = m.classList.contains("hidden"); closeMenus(); if (hid) m.classList.remove("hidden"); };
+  $$("[data-pasta]", box).forEach(d => d.onclick = guard(async () => {
+    state.folder = {id: d.dataset.pasta}; state.grupo = ""; state.novos = false; state.search = ""; state.offset = 0; renderSidebar(); await loadThreads();
+  }));
 }
 
 async function loadThreads() {
   const list = $("#thread-list");
   showList();
-  if (state.folder.id === "PEND" && !state.folder.name && !state.search) { $("#tabs-inbox").classList.add("hidden"); state.threads = []; state.hlCount = 0; renderPager(); return renderPendencias(); }
   renderTabs();
+  if (state.folder.id === "PEND" && !state.folder.name && !state.search) { state.threads = []; state.hlCount = 0; renderPager(); return renderPendencias(); }
   let data, total, highlights = [];
   if (state.search && state.searchGmail) {
     if (!state.account) { list.innerHTML = `<div class="empty">${ic("person_search")}Escolha uma conta (no círculo do canto superior direito) para buscar no Gmail.</div>`; return; }
@@ -252,9 +255,8 @@ async function loadThreads() {
   } else {
     const p = {account: state.account, q: state.search, nao_lidas: $("#only-unread").checked ? 1 : "", limit: PAGE, offset: state.offset};
     if (state.folder.name) { if (state.account) p.label = state.folder.id; else p.label_nome = state.folder.name; }
-    else if (state.folder.id === "NOTIF") { p.label = "ALL"; p.tipo = "TRIBUNAL"; }
     else p.label = state.folder.id;
-    if (state.grupo && ["INBOX", "NOTIF"].includes(state.folder.id) && !state.folder.name) p.grupo = state.grupo;
+    if (state.grupo && state.folder.id === "INBOX" && !state.folder.name) p.grupo = state.grupo;
     // Caixa de entrada: Destaques do período escolhido, por prioridade (intimações/citações não abertas primeiro)
     if (state.novos && state.folder.id === "INBOX") p.novos = 1;
     const withHl = state.folder.id === "INBOX" && !state.folder.name && !state.search && !state.grupo && !p.nao_lidas && !state.novos;
@@ -289,7 +291,7 @@ function renderThreads() {
   if (!state.threads.length) {
     const msg = state.search ? "Nenhuma mensagem corresponde à sua pesquisa." :
       state.jan && state.jan.soPeriodo ? `Nenhum e-mail no período (${state.jan.rotulo}).` :
-      state.novos ? "Nenhum e-mail novo (fora da cadeia) hoje." : state.folder.id === "NOTIF" ? "Nenhuma notificação judicial por aqui." : state.folder.id === "ANUNCIOS" ? "Nenhum anúncio ou promoção." : "Nenhuma conversa nesta pasta.";
+      state.novos ? "Nenhum e-mail novo (fora da cadeia) hoje." : state.grupo === "judiciais" ? "Nenhuma intimação, citação ou notificação por aqui." : state.folder.id === "ANUNCIOS" ? "Nenhum anúncio ou promoção." : "Nenhuma conversa nesta pasta.";
     list.innerHTML = `<div class="empty">${ic(state.folder.id === "NOTIF" ? "gavel" : "inbox")}${msg}</div>`; return;
   }
   const multi = !state.account && state.accounts.length > 1;
@@ -1004,7 +1006,13 @@ function teclaSlash(e) {
 
 // ─── Contadores e notificações ───────────────────────────────────────────
 async function refreshStatus() {
-  const s = await api(`/api/status?${qs({account: state.account, desde: state.lastNotif ?? 0})}`);
+  let s;
+  try { s = await api(`/api/status?${qs({account: state.account, desde: state.lastNotif ?? 0})}`); }
+  catch (e) {
+    // o programa local não respondeu: sem ele nada chega aqui, então avisa em vez de parecer "tudo em dia"
+    state.offline = true; renderIntegridade(); return;
+  }
+  state.offline = false;
   const first = state.lastNotif === null;
   state.status = s;
   $("#counter-num").textContent = s.recebidas_hoje;
@@ -1025,11 +1033,77 @@ async function refreshStatus() {
     if (!$("#thread-list").classList.contains("hidden")) loadThreads();
   }
   state.lastNotif = s.ultimo_id;
-  document.title = (s.nao_lidas_local ? `Caixa de entrada (${s.nao_lidas_local})` : "Caixa de entrada") + " - MarquesPro Mail";
+  renderIntegridade();
+  document.title = (s.integridade && s.integridade.nivel === "erro" ? "⚠ " : "") + (s.nao_lidas_local ? `Caixa de entrada (${s.nao_lidas_local})` : "Caixa de entrada") + " - MarquesPro Mail";
   renderSidebar();
   if (!$("#tabs-inbox").classList.contains("hidden")) renderTabs();
   if (!$("#counter-pop").classList.contains("hidden")) renderCounterPop();
 }
+// ─── Integridade Gmail × MarquesPro ──────────────────────────────────────────
+const NIVEL_INFO = {ok: {icon: "verified_user", lbl: "Gmail sincronizado"}, atencao: {icon: "warning", lbl: "Atenção na sincronização"}, erro: {icon: "gpp_bad", lbl: "Falha na sincronização"}};
+function renderIntegridade() {
+  const i = state.status && state.status.integridade;
+  const off = state.offline;
+  const nivel = off ? "erro" : (i ? i.nivel : "ok");
+  const info = NIVEL_INFO[nivel];
+  const btn = $("#btn-integ");
+  btn.className = `pill-count integ ${nivel}`;
+  btn.querySelector(".ms").textContent = off ? "cloud_off" : info.icon;
+  $("#integ-lbl").textContent = off ? "Sem comunicação" : info.lbl;
+  const ban = $("#integ-banner");
+  if (off) {
+    ban.className = "integ-banner erro";
+    ban.innerHTML = `${ic("cloud_off")}<div><b>O MarquesPro não está respondendo neste computador.</b> Enquanto isso, nenhum e-mail novo do Gmail chega aqui. Verifique se a janela do programa está aberta e tente novamente.</div><button class="btn" id="integ-retry">Tentar de novo</button>`;
+    $("#integ-retry").onclick = guard(refreshStatus);
+    return;
+  }
+  if (!i || i.nivel === "ok") { ban.className = "integ-banner hidden"; ban.innerHTML = ""; return; }
+  const acoes = {reconectar: `<button class="btn primary" data-ia="reconectar">Reconectar conta</button>`, verificar: `<button class="btn" data-ia="verificar">Verificar agora</button>`, reconhecer: `<button class="btn" data-ia="reconhecer">Entendi</button>`};
+  ban.className = `integ-banner ${i.nivel}`;
+  ban.innerHTML = `${ic(info.icon)}<div><b>${esc(info.lbl)}.</b> ${esc(i.mensagem)}${i.conta ? ` <span class="muted">(${esc(i.conta)})</span>` : ""}</div>
+    <button class="btn" data-ia="detalhes">Detalhes</button>${acoes[i.acao] || ""}`;
+  $$("[data-ia]", ban).forEach(b => b.onclick = guard(() => acaoIntegridade(b.dataset.ia)));
+  if (i.nivel === "erro" && state.integAvisado !== i.mensagem) {
+    state.integAvisado = i.mensagem;
+    if ("Notification" in window && Notification.permission === "granted") new Notification("MarquesPro: falha na sincronização com o Gmail", {body: i.mensagem, tag: "integ"});
+  }
+  if (i.nivel !== "erro") state.integAvisado = null;
+}
+async function acaoIntegridade(a) {
+  if (a === "reconectar") { openSettings("tab-accounts"); return; }
+  if (a === "detalhes") { await abrirIntegridade(); return; }
+  if (a === "reconhecer") { await api("/api/integridade/reconhecer", {method: "POST"}); await refreshStatus(); await abrirIntegridade(true); return; }
+  if (a === "verificar") {
+    toast("Conferindo tudo o que está no Gmail…");
+    const r = await api("/api/integridade/verificar", {method: "POST"});
+    const rec = r.resultados.reduce((n, x) => n + (x.recuperados || 0), 0), err = r.resultados.find(x => x.erro || x.pendentes);
+    toast(err ? `A conferência encontrou problema: ${err.erro || err.pendentes + " e-mail(s) não chegaram"}` : rec ? `Conferido: ${rec} e-mail(s) que faltavam foram recuperados.` : "Conferido: tudo o que está no Gmail está aqui.", !!err);
+    await refreshStatus(); await loadThreads(); if (!$("#integ-pop").classList.contains("hidden")) await abrirIntegridade(true);
+  }
+}
+async function abrirIntegridade(manter) {
+  const pop = $("#integ-pop");
+  if (!manter && !pop.classList.contains("hidden")) { pop.classList.add("hidden"); return; }
+  closeMenus(); $("#counter-pop").classList.add("hidden");
+  const d = await api("/api/integridade");
+  const quando = (t) => t ? esc(t.slice(8, 10) + "/" + t.slice(5, 7) + " " + t.slice(11, 16)) : "—";
+  pop.innerHTML = `<h4>Gmail × MarquesPro</h4>
+    <p class="muted">A cada ${Math.round((d.intervalo_s || 60) / 60) || 1} min o programa busca o que chegou no Gmail. A cada 5 min ele <b>confere item por item</b> (inclusive spam) se tudo está aqui e traz o que faltar.</p>
+    ${d.contas.map(c => `<div class="integ-conta ${c.nivel}"><div class="ic-top">${ic(NIVEL_INFO[c.nivel].icon, "sm")}<b>${esc(c.email)}</b></div>
+      <div class="muted">${esc(c.mensagem)}</div>
+      <div class="kv"><span>Última sincronização</span><b>${quando(c.ultima_sync)}</b></div>
+      <div class="kv"><span>Última conferência completa</span><b>${quando(c.ultima_verificacao)}</b></div>
+      <div class="kv"><span>No Gmail (últimos ${c.janela_dias || "—"} dias)</span><b>${c.gmail_n ?? "—"}</b></div>
+      <div class="kv"><span>Aqui no MarquesPro</span><b>${c.aqui_n ?? "—"}</b></div>
+      <div class="kv"><span>Recuperados pela conferência (total)</span><b>${c.recuperados_total}</b></div>
+      ${c.erro ? `<div class="integ-erro">${esc(c.erro)}</div>` : ""}</div>`).join("") || `<p class="muted">Nenhuma conta conectada.</p>`}
+    <div class="row"><button class="btn primary" data-ia="verificar">Verificar agora</button>${d.contas.some(c => c.acao === "reconhecer") ? `<button class="btn" data-ia="reconhecer">Entendi</button>` : ""}${d.contas.some(c => c.acao === "reconectar") ? `<button class="btn" data-ia="reconectar">Reconectar conta</button>` : ""}</div>
+    <h4>Histórico</h4>
+    ${d.eventos.length ? d.eventos.slice(0, 12).map(e => `<div class="ev ${e.nivel}"><span class="muted">${quando(e.ts)}</span> ${esc(e.detalhe || e.evento)}</div>`).join("") : `<p class="muted">Sem ocorrências registradas.</p>`}`;
+  pop.classList.remove("hidden");
+  $$("[data-ia]", pop).forEach(b => b.onclick = guard(() => acaoIntegridade(b.dataset.ia)));
+}
+
 function renderCounterPop() {
   const s = state.status; if (!s) return;
   const n = s.notificacoes;
@@ -1052,7 +1126,7 @@ function renderCounterPop() {
     ${s.novas.length ? `<h4>Últimos recebidos</h4>` + s.novas.map(x => `<div class="nt" data-acc="${esc(x.account)}" data-tid="${esc(x.thread_id)}"><b>${esc(x.from_name || "")}</b><br><span class="muted">${esc(x.subject || "")} · ${esc(x.created_at.slice(11, 16))}</span></div>`).join("") : ""}
     <h4>Sincronização</h4>${s.contas.map(c => `<div class="kv"><span class="muted">${esc(c.email)}</span><span class="muted">${c.last_error ? "Erro: " + esc(c.last_error.slice(0, 60)) : esc(c.last_sync || "—")}</span></div>`).join("")}`;
   $("#pop-ver-notif").onclick = guard(async () => {
-    $("#counter-pop").classList.add("hidden"); state.folder = {id: "NOTIF"}; state.grupo = ""; state.search = ""; state.offset = 0; renderSidebar(); await loadThreads();
+    $("#counter-pop").classList.add("hidden"); state.folder = {id: "INBOX"}; state.grupo = "judiciais"; state.novos = false; state.search = ""; state.offset = 0; renderSidebar(); await loadThreads();
   });
   $("#pop-ver-pend").onclick = guard(async () => { $("#counter-pop").classList.add("hidden"); state.folder = {id: "PEND"}; state.search = ""; state.offset = 0; renderSidebar(); await loadThreads(); });
   $$("#counter-pop .nt").forEach(x => x.onclick = guard(() => { $("#counter-pop").classList.add("hidden"); return openThread(x.dataset.acc, x.dataset.tid); }));
@@ -1146,7 +1220,7 @@ function renderRuleChips() {
 
 // ─── Eventos ─────────────────────────────────────────────────────────────
 function bind() {
-  document.addEventListener("click", () => { closeMenus(); $("#counter-pop").classList.add("hidden"); });
+  document.addEventListener("click", () => { closeMenus(); $("#counter-pop").classList.add("hidden"); $("#integ-pop").classList.add("hidden"); });
   document.addEventListener("click", () => {
     if ("Notification" in window && Notification.permission === "default") Notification.requestPermission();
   }, {once: true});
@@ -1188,11 +1262,14 @@ function bind() {
     toast("Sincronizando…");
     const r = await api("/api/sync", {method: "POST"});
     r.filter(x => x.status === "erro").forEach(x => toast(`${x.account}: ${x.erro}`, true));
+    if (r.length && r.every(x => x.status === "ok")) toast("Sincronizado com o Gmail.");
     await loadLabels(); await refreshStatus(); await loadThreads();
   });
   const togglePop = (e) => { e.stopPropagation(); closeMenus(); const p = $("#counter-pop"); p.classList.toggle("hidden"); renderCounterPop(); };
   $("#counter").onclick = togglePop; $("#counter-notif").onclick = togglePop;
   $("#counter-pop").onclick = (e) => e.stopPropagation();
+  $("#btn-integ").onclick = guard(async (e) => { e.stopPropagation(); await abrirIntegridade(); });
+  $("#integ-pop").onclick = (e) => e.stopPropagation();
 
   // Lista
   $("#thread-list").onclick = guard(async (e) => {

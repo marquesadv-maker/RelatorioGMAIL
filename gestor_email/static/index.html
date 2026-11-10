@@ -19,6 +19,9 @@
     <button class="icon-btn" type="button" id="btn-clear-search" title="Limpar pesquisa"><span class="ms">close</span></button>
   </form>
   <div class="top-right">
+    <button class="pill-count integ ok" id="btn-integ" title="Conferência entre o Gmail e o MarquesPro">
+      <span class="ms">verified_user</span><span class="lbl" id="integ-lbl">Gmail sincronizado</span>
+    </button>
     <button class="pill-count notif" id="counter-notif" title="Notificações judiciais recebidas hoje (intimações, citações, publicações)">
       <span class="ms">gavel</span><b id="notif-num">0</b><span class="lbl">notificações hoje</span>
     </button>
@@ -34,6 +37,8 @@
   </div>
 </header>
 
+<div class="integ-banner hidden" id="integ-banner" role="alert"></div>
+<div class="pop integ-pop hidden" id="integ-pop"></div>
 <div class="pop counter-pop hidden" id="counter-pop"></div>
 
 <div class="layout">

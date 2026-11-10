@@ -16,7 +16,7 @@ from typing import Any, Dict, Iterable, List, Optional
 
 from googleapiclient.errors import HttpError
 
-from . import auth, config, db, gmail_ops, triagem
+from . import auth, config, db, gmail_ops, integridade, triagem
 
 log = logging.getLogger("gestor_email.sync")
 
@@ -226,10 +226,12 @@ def sync_account(account: str) -> Dict[str, Any]:
             gmail_ops.sync_labels(service, account)
         else:
             n = full_sync(service, account)
+        integridade.registrar_sync(account, True)
         return {"account": account, "status": "ok", "novas": n}
     except Exception as e:  # registra e segue para a próxima conta
         log.exception("Erro ao sincronizar %s", account)
         db.set_account_state(account, last_error=str(e)[:500])
+        integridade.registrar_sync(account, False, str(e))
         return {"account": account, "status": "erro", "erro": str(e)[:500]}
     finally:
         lock.release()
@@ -253,7 +255,12 @@ class SyncLoop(threading.Thread):
 
     def run(self):
         while not self._stop_event.is_set():
-            sync_all()
+            try:
+                for r in sync_all():
+                    if r.get("status") == "ok":
+                        integridade.rotina(r["account"])   # confere Gmail × cache quando está na hora
+            except Exception:   # nunca deixa a sincronização morrer em silêncio
+                log.exception("Falha no ciclo de sincronização")
             self._stop_event.wait(self.interval)
 
     def stop(self):

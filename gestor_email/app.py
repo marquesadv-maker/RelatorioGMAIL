@@ -16,7 +16,7 @@ from typing import Any, Dict, List, Optional
 from flask import Flask, Response, abort, jsonify, request, send_from_directory
 from googleapiclient.errors import HttpError
 
-from . import auth, config, db, gmail_ops, ia, modelos, pendencias, sync, triagem
+from . import auth, config, db, gmail_ops, ia, integridade, modelos, pendencias, sync, triagem
 
 INLINE_IMAGE_TYPES = {"image/png", "image/jpeg", "image/gif", "image/webp", "image/bmp"}
 
@@ -104,6 +104,26 @@ def create_app() -> Flask:
     @app.post("/api/sync")
     def sync_now():
         return jsonify(sync.sync_all())
+
+    # ─── Integridade da sincronização ─────────────────────────────────────
+
+    @app.get("/api/integridade")
+    def integridade_get():
+        return jsonify(dict(integridade.estado(), eventos=integridade.eventos(), intervalo_s=config.SYNC_INTERVAL_SECONDS))
+
+    @app.post("/api/integridade/verificar")
+    def integridade_verificar():
+        """Confere agora tudo o que há no Gmail (janela inteira) contra o cache e traz o que faltar."""
+        resultados = []
+        for a in auth.list_accounts():
+            r = sync.sync_account(a)
+            resultados.append(integridade.verificar(a, config.SYNC_DAYS) if r.get("status") in ("ok", "em andamento") else dict(r))
+        return jsonify({"resultados": resultados, "estado": integridade.estado()})
+
+    @app.post("/api/integridade/reconhecer")
+    def integridade_reconhecer():
+        integridade.reconhecer()
+        return jsonify(integridade.estado())
 
     # ─── Etiquetas ────────────────────────────────────────────────────────
 
@@ -404,6 +424,7 @@ def create_app() -> Flask:
             f"SELECT COUNT(*) AS n FROM messages m WHERE {pendencias.novo_sql('m')} AND {_caixa_sql()} {acc_sql}",
             [ms] + acc_params)["n"]
         return jsonify({
+            "integridade": integridade.estado(),
             "novos_hoje": novos_hoje,
             "pendencias": pendencias.contar(account),
             "notificacoes": {"hoje": notif_hoje, "pendentes": notif_pend, "por_tipo": notif_tipos,
@@ -795,6 +816,7 @@ def _require_account(acc) -> str:
 
 # Destaques: intimações, citações e demais notificações judiciais
 GRUPOS_NOTIF = {
+    "judiciais": "m.tipo='TRIBUNAL'",
     "intimacoes": "m.tipo='TRIBUNAL' AND m.subtipo='Intimação'",
     "citacoes": "m.tipo='TRIBUNAL' AND m.subtipo='Citação'",
     "notificacoes": "m.tipo='TRIBUNAL' AND COALESCE(m.subtipo,'') NOT IN ('Intimação','Citação')",

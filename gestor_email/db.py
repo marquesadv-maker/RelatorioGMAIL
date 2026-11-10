@@ -151,6 +151,30 @@ CREATE TABLE IF NOT EXISTS pendencias (
     PRIMARY KEY (account, thread_id, message_id)
 );
 
+-- Integridade da sincronização com o Gmail (semáforo, verificação cruzada e histórico)
+CREATE TABLE IF NOT EXISTS integridade (
+    account            TEXT PRIMARY KEY,
+    ultima_verificacao TEXT,
+    ultima_ok          TEXT,
+    ultima_profunda    TEXT,
+    janela_dias        INTEGER,
+    gmail_n            INTEGER,
+    local_n            INTEGER,
+    ultimo_local_ms    INTEGER,
+    recuperados_total  INTEGER NOT NULL DEFAULT 0,
+    falhas_seguidas    INTEGER NOT NULL DEFAULT 0,
+    ultimo_erro        TEXT,
+    erro_tipo          TEXT
+);
+CREATE TABLE IF NOT EXISTS sync_log (
+    id      INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts      TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+    account TEXT,
+    nivel   TEXT NOT NULL,
+    evento  TEXT NOT NULL,
+    detalhe TEXT
+);
+
 CREATE TABLE IF NOT EXISTS settings (
     key   TEXT PRIMARY KEY,
     value TEXT
@@ -339,6 +363,8 @@ DEFAULT_SETTINGS = {
     # Regra do escritório: prazo interno = N dias úteis antes da data do ato (vazio = preencher manualmente)
     "prazo_interno_dias": "",
     # Palavras que ganham ênfase na lista (assunto e trecho), separadas por vírgula
+    # Última vez em que o usuário confirmou ter visto e-mails recuperados pela verificação cruzada
+    "integridade_ack": "",
     "palavras_destaque": "intimação, notificação, citação, urgente, prazo, audiência, sentença, mandado, penhora, bloqueio",
 }
 
