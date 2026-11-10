@@ -542,3 +542,65 @@ mark.kw{background:none;color:inherit;font-weight:700;box-shadow:inset 0 -2px 0 
 .qbtn.jud,.qbtn.nov,.qbtn.pen{background:#fff;border-color:#dadce0}
 .qbtn.jud:hover,.qbtn.nov:hover,.qbtn.pen:hover{background:#f6f8fc}
 .qbtn.jud.on,.qbtn.nov.on,.qbtn.pen.on{background:#d3e3fd;border-color:#d3e3fd}
+
+/* ══ Visual v3 — o mais próximo possível do Gmail ═══════════════════════════════
+   Sem barras coloridas, sem negrito extra, etiquetas no formato do Gmail. */
+.row-t.hl,.row-t.prio,.row-t.novo,.row-t.hl:hover,.row-t.prio:hover{box-shadow:none}
+.row-t:hover{box-shadow:inset 1px 0 0 #dadce0,inset -1px 0 0 #dadce0,0 1px 2px 0 rgba(60,64,67,.3),0 1px 3px 1px rgba(60,64,67,.15)}
+.row-t.enfase .subj-t{font-weight:inherit}
+.row-t.unread.enfase .subj-t{font-weight:700}
+mark.kw{background:none;color:inherit;font-weight:inherit;box-shadow:none;padding:0}
+.row-t{min-height:40px;border-bottom:1px solid #f1f3f4}
+.row-t .line1{gap:4px}
+.row-t .chip{height:18px;line-height:18px;padding:0 4px;border-radius:4px;font-size:12px;font-weight:400;background:var(--chip);color:#444746;border:0}
+.row-t .chip.g-prio{background:#cc3a21;color:#fff}
+.row-t .chip.g-sys{background:#e8eaed;color:#444746}
+.row-t .alerta-envio{opacity:.9}
+.sec-head,.sec-head.hl{padding:8px 16px 4px 20px;font-size:11px;font-weight:500;letter-spacing:.06em;text-transform:uppercase;color:#5f6368;background:#fff;border-bottom:0}
+.sec-head .ms,.sec-head.hl .ms{display:none}
+.sec-head .n{margin-left:8px;font-weight:400;color:#80868b}
+
+/* Abas como as da caixa de entrada do Gmail */
+.tabs-inbox{padding:0;border-bottom:1px solid #e0e0e0;overflow:visible;display:block}
+.gtabs{display:flex;align-items:stretch;gap:0;padding:0 8px 0 0;min-height:48px}
+.gtab{display:inline-flex;align-items:center;gap:12px;height:48px;padding:0 20px;border:0;border-bottom:3px solid transparent;background:transparent;color:#5f6368;font-size:14px;font-weight:500;cursor:pointer;white-space:nowrap}
+.gtab:hover{background:#f1f3f4}
+.gtab .ms{font-size:20px;width:20px;color:#5f6368}
+.gtab.on{color:#0b57d0;border-bottom-color:#0b57d0}
+.gtab.on .ms{color:#0b57d0}
+.gtab .gn{min-width:18px;height:18px;padding:0 6px;border-radius:9px;background:#e8eaed;color:#444746;font-size:11px;font-weight:500;display:inline-grid;place-items:center;line-height:1}
+.gtab .gn.red{background:#fce8e6;color:#c5221f}
+.gtabs .spacer{flex:1}
+.gbtn{display:inline-flex;align-items:center;gap:4px;height:32px;margin:8px 0;padding:0 8px;border:0;border-radius:16px;background:transparent;color:#5f6368;font-size:13px;cursor:pointer}
+.gbtn:hover{background:#f1f3f4}
+.gtabs .icon-btn{margin:6px 0}
+@media (max-width:1100px){.gtab{padding:0 12px;gap:8px}}
+@media (max-width:760px){.gtabs{overflow-x:auto}.gtab{padding:0 12px}.gtab span:not(.ms):not(.gn){display:none}.gtab.on span:not(.ms):not(.gn){display:inline}}
+
+/* Topo: ícones simples */
+.pill-count.integ,.pill-count.integ.ok{background:transparent;padding:0 8px;color:#444746;animation:none}
+.pill-count.integ.ok .lbl,.pill-count.notif .lbl{display:none}
+.pill-count.integ.ok .ms{color:#1e8e3e}
+.pill-count.integ.atencao{background:#fef7e0;color:#7a4b00}
+.pill-count.integ.erro{background:#d93025;color:#fff}
+.pill-count.notif{background:transparent;color:#444746;padding:0 8px}
+.pill-count.notif:hover{background:rgba(68,71,70,.08)}
+.pill-count.notif .ms{color:#444746}
+.pill-count.notif b{background:#d93025;color:#fff;border-radius:9px;min-width:18px;height:18px;font-size:11px;display:inline-grid;place-items:center;padding:0 5px;line-height:1;margin-left:-4px;align-self:flex-start;margin-top:4px}
+
+/* Pendências: lista simples, como linhas do Gmail */
+.pend-head{padding:12px 20px 8px;border-bottom:1px solid #f1f3f4}
+.pend-head b{font-weight:500}
+.pend-tabs{padding:0}
+.pend-tabs .filter-chip{border-color:#dadce0;font-weight:400;height:28px}
+.pend-tabs .filter-chip .n{background:#e8eaed;color:#444746}
+.pend-card,.pend-card.atraso,.pend-card.em_execucao,.pend-card.concluida{box-shadow:none;background:#fff;border-bottom:1px solid #f1f3f4;padding:10px 20px}
+.pend-card:hover{box-shadow:0 1px 2px 0 rgba(60,64,67,.3),0 1px 3px 1px rgba(60,64,67,.15)}
+.pend-card .chip.pend,.pend-card .chip.pend.pendente,.pend-card .chip.pend.leve{background:#e8eaed;color:#444746;box-shadow:none}
+.pend-card.atraso .chip.pend.pendente{background:#fce8e6;color:#c5221f}
+.pend-q{font-style:normal;color:#5f6368;border-left:0;padding:0;margin:2px 0}
+.pend-acts .btn{height:30px;font-size:13px}
+.pend-banner,.pend-banner.em_execucao{background:#f2f6fc;color:#202124;border-radius:8px}
+.pend-banner .ms{color:#5f6368}
+.pend-banner .link-btn{color:#0b57d0;text-decoration:none}
+.envio-aviso{color:#5f6368}.envio-aviso .ms{color:#b06000}
