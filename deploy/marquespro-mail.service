@@ -1,0 +1,22 @@
+[Unit]
+Description=MarquesPro Mail (gestor de e-mail Gmail)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=marquespro-mail
+Group=marquespro-mail
+WorkingDirectory=/var/www/html/marquespromail
+EnvironmentFile=/etc/marquespro-mail.env
+ExecStart=/var/www/html/marquespromail/venv/bin/python -m gestor_email --sem-navegador
+Restart=always
+RestartSec=5
+# Só escuta no próprio servidor; o acesso externo passa pelo Cloudflare Tunnel + Cloudflare Access
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=/var/lib/marquespro-mail
+
+[Install]
+WantedBy=multi-user.target
