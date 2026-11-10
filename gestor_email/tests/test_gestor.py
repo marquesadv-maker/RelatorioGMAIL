@@ -217,54 +217,117 @@ class GestorTest(unittest.TestCase):
         self.assertEqual(r.headers["X-Total-Count"], "2")
         self.assertEqual(self.g.modify_calls, [])            # nunca altera o Gmail
 
-    def test_destaques_de_notificacoes(self):
-        self.g.add_message("PJe <pje@trt2.jus.br>", "Intimação - Processo 1")
-        self.g.add_message("PJe <pje@trt2.jus.br>", "Citação eletrônica - Processo 2")
-        self.g.add_message("DJE <dje@tjsp.jus.br>", "Publicação no Diário Oficial")
-        self.g.add_message("Cliente <cliente@ex.com>", "Oi")
+    def test_destaques_por_periodo_e_prioridade(self):
+        import time
+        agora = int(time.time() * 1000)
+        dia = 24 * 3600 * 1000
+        self.g.add_message("Cliente <cliente@ex.com>", "Oi hoje")
+        self.g.add_message("PJe <pje@trt2.jus.br>", "Publicação no Diário Oficial", date_ms=agora - 2 * dia)
+        self.g.add_message("PJe <pje@trt2.jus.br>", "Intimação - Processo 1", date_ms=agora - 5 * dia)
+        self.g.add_message("Cliente <outro@ex.com>", "Antigo", date_ms=agora - 40 * dia)
         sync.sync_account(ME)
-        hl = self.get("/api/threads?label=INBOX&destaque=1")
-        resto = self.get("/api/threads?label=INBOX&destaque=0")
-        self.assertEqual(len(hl), 3)
-        self.assertEqual([t["subject"] for t in resto], ["Oi"])
-        g = self.get("/api/status")["notificacoes"]["pendentes_por_grupo"]
-        self.assertEqual(g, {"intimacoes": 1, "citacoes": 1, "notificacoes": 1})
-        self.assertEqual(len(self.get("/api/threads?label=ALL&grupo=citacoes")), 1)
-        # Aberta: sai dos destaques e volta para a lista normal
-        self.get(f"/api/threads/{ME}/{hl[0]['thread_id']}")
-        self.assertEqual(len(self.get("/api/threads?label=INBOX&destaque=1")), 2)
-        self.assertEqual(len(self.get("/api/threads?label=INBOX&destaque=0")), 2)
+        base = "/api/threads?label=INBOX&prioridade=1&destaque=1"
+        hoje_ms = int(__import__("datetime").datetime.now().replace(hour=0, minute=0, second=0, microsecond=0).timestamp() * 1000)
+        self.assertEqual(self._assuntos(base), ["Oi hoje"])
+        sete = self.get(f"{base}&desde={hoje_ms - 6 * dia}")
+        self.assertEqual([t["subject"] for t in sete][:2], ["Intimação - Processo 1", "Publicação no Diário Oficial"])
+        self.assertEqual(len(sete), 3)
+        self.assertEqual(len(self.get(f"{base}&desde={hoje_ms - 29 * dia}")), 3)
+        self.assertEqual(self._assuntos(f"/api/threads?label=INBOX&destaque=0&desde={hoje_ms - 29 * dia}"), ["Antigo"])
+        esp = self.get(f"{base}&desde={hoje_ms - 6 * dia}&ate={hoje_ms - 1 * dia}")
+        self.assertEqual(sorted(t["subject"] for t in esp), ["Intimação - Processo 1", "Publicação no Diário Oficial"])
+        self.get(f"/api/threads/{ME}/{sete[0]['thread_id']}")
+        depois = self.get(f"{base}&desde={hoje_ms - 6 * dia}")
+        self.assertNotEqual(depois[0]["subject"], "Intimação - Processo 1")
+        self.assertEqual(self.get("/api/status")["notificacoes"]["pendentes_por_grupo"]["notificacoes"], 1)
 
-    def test_modelos_e_ia(self):
+    def test_modelos_e_ia_economica(self):
         ms = self.get("/api/modelos")
-        cods = {m["codigo"] for m in ms}
-        self.assertTrue({"AUD-01", "DEF-01", "PER-03", "HTE-05", "JUL-02"} <= cods)
+        self.assertTrue({"AUD-01", "DEF-01", "PER-03", "HTE-05", "JUL-02"} <= {m["codigo"] for m in ms})
         aud = next(m for m in ms if m["codigo"] == "AUD-02")
         self.assertIn("PROCESSO", aud["campos"])
         self.assertNotIn("REGRA", aud["corpo"])
         self.assertFalse(self.get("/api/ia/status")["configurada"])
-        r = self.client.post("/api/ia/preencher", headers=self.h, data={"codigo": "AUD-02", "instrucoes": "x"})
-        self.assertEqual(r.status_code, 400)  # sem chave
-        # Chamada à IA simulada (nenhuma rede)
+        texto = ("INTIMAÇÃO. Fica designada audiência de conciliação telepresencial para o dia 15/12/2026 às 14h30, "
+                 "no processo 0001234-56.2026.5.02.0001. Reclamante: Fulano de Tal Reclamada: Empresa Exemplo Ltda.")
+        r = self.post("/api/ia/preencher", data={"codigo": "", "instrucoes": texto})
+        self.assertEqual(r["codigo"], "AUD-02")
+        self.assertFalse(r["uso"]["ia"])
+        self.assertEqual(r["campos"]["PROCESSO"]["valor"], "0001234-56.2026.5.02.0001")
+        self.assertEqual(r["campos"]["DATA"]["valor"], "15/12/2026")
+        self.assertEqual(r["campos"]["HORARIO"]["valor"], "14h30")
+        self.assertEqual(r["campos"]["MODALIDADE"]["valor"], "telepresencial")
+        self.assertEqual(r["campos"]["RECLAMANTE"]["valor"], "Fulano de Tal")
+        self.assertEqual(r["pendencias"], [])
+        self.assertNotIn("[PREENCHER", r["corpo"])
+        self.assertFalse(r["blocos"]["BLOCO_LINK"]["incluir"])
+        r = self.post("/api/ia/preencher", data={"codigo": "AUD-02", "instrucoes": "audiência dia 15/12/2026"})
+        self.assertIn("PROCESSO", r["pendencias"])
+        self.assertIn("[PREENCHER: PROCESSO]", r["corpo"])
+        self.assertIn("IA não configurada", r["observacoes"])
+
+    def test_ia_prompt_minimo_e_verificacao(self):
+        from gestor_email import ia
+        chamadas = []
+
         class R:
             stop_reason = "end_turn"
+            usage = type("U", (), {"input_tokens": 900, "output_tokens": 120, "cache_read_input_tokens": 0})()
             content = [type("B", (), {"type": "text", "text": json.dumps({
-                "codigo": "AUD-02", "assunto": "", "corpo": "Prezados, bom dia!\n[PREENCHER: DATA]",
-                "pendencias": ["DATA"], "observacoes": ""})})()]
-        capturado = {}
+                "codigo": "PER-03", "campos": [
+                    {"nome": "RECLAMADA", "valor": "Empresa Exemplo Ltda", "trecho": "Reclamada: Empresa Exemplo Ltda"},
+                    {"nome": "OBJETO_PERICIA", "valor": "insalubridade", "trecho": "perícia de insalubridade"},
+                    {"nome": "PERITO", "valor": "Fulano Perito Inventado", "trecho": "inventado"}],
+                "blocos": [], "pendencias": [], "observacoes": ""})})()]
+
         class C:
             class beta:
                 class messages:
                     @staticmethod
                     def create(**kw):
-                        capturado.update(kw)
+                        chamadas.append(kw)
                         return R()
+        texto = ("Perícia de insalubridade designada para 20/01/2027 às 9h, processo 0004321-10.2026.5.02.0002. "
+                 "Reclamante: Beltrano Silva. Reclamada: Empresa Exemplo Ltda. Prazo para assistente técnico: 5 dias.")
+        out = ia.preencher_auto("", texto, None, [], client=C)
+        self.assertEqual(len(chamadas), 1)
+        kw = chamadas[0]
+        self.assertLess(len(kw["system"][0]["text"]), 1500)
+        pedido = kw["messages"][0]["content"][-1]["text"]
+        self.assertLess(len(pedido), 6000)
+        self.assertNotIn("PAR-01", pedido)
+        self.assertEqual(kw["output_config"]["effort"], "low")
+        self.assertEqual(out["campos"]["PROCESSO"]["origem"], "documento")
+        self.assertEqual(out["campos"]["RECLAMADA"]["origem"], "documento")
+        self.assertTrue(out["uso"]["ia"] and out["uso"]["entrada"] == 900)
+        if "PERITO" in out["campos"]:
+            self.assertTrue(out["campos"]["PERITO"]["verificar"])
+
+    def test_pdf_com_texto_local_e_imagem_pede_confirmacao(self):
+        try:
+            from fpdf import FPDF
+        except ImportError:
+            self.skipTest("fpdf2 não instalado")
         from gestor_email import ia
-        out = ia.preencher("AUD-02", "teste", None, [("a.pdf", "application/pdf", b"%PDF")], client=C)
-        self.assertEqual(out["pendencias"], ["DATA"])
-        self.assertEqual(capturado["model"], "claude-opus-5-5")
-        self.assertIn("modelos-de-e-mails-marques", capturado["system"][0]["text"][:400].lower() + "modelos-de-e-mails-marques")
-        self.assertEqual(capturado["messages"][0]["content"][0]["type"], "document")
+        pdf = FPDF()
+        pdf.add_page(); pdf.set_font("Helvetica", size=11)
+        for l in ("INTIMACAO - Audiencia de conciliacao telepresencial designada para 15/12/2026 as 14h30.",
+                  "Processo 0001234-56.2026.5.02.0001. Reclamante: Fulano de Tal  Reclamada: Empresa Exemplo Ltda.",
+                  "Compareca a parte reclamada por meio de seu representante e advogado."):
+            pdf.multi_cell(0, 8, l, new_x="LMARGIN", new_y="NEXT")
+        out = ia.preencher_auto("", "", None, [("intimacao.pdf", "application/pdf", bytes(pdf.output()))])
+        self.assertEqual(out["codigo"], "AUD-02")
+        self.assertFalse(out["uso"]["ia"])
+        self.assertEqual(out["campos"]["DATA"]["valor"], "15/12/2026")
+
+        class C:
+            class beta:
+                class messages:
+                    @staticmethod
+                    def create(**kw):
+                        raise AssertionError("IA chamada sem confirmação")
+        img = ia.preencher_auto("AUD-02", "", None, [("scan.png", "image/png", b"x")], client=C)
+        self.assertEqual(img["precisa_visao"], ["scan.png"])
 
     def test_logo_da_assinatura_vai_embutida(self):
         sync.sync_account(ME)

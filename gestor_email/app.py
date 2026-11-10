@@ -191,6 +191,13 @@ def create_app() -> Flask:
                 params.extend([like] * 4)
 
         read = _read_sql("t.account", "t.thread_id")
+        ordem = "t.last_date DESC"
+        if request.args.get("prioridade") == "1":
+            # Prioridade: intimação/citação não aberta > outra notificação não aberta > não lidas > lidas; depois, mais recentes
+            trib = ("EXISTS (SELECT 1 FROM messages mp WHERE mp.account=t.account AND mp.thread_id=t.thread_id "
+                    "AND mp.tipo='TRIBUNAL'{})")
+            ordem = (f"CASE WHEN {read} THEN 3 WHEN {trib.format(' AND mp.subtipo IN (' + chr(39) + 'Intimação' + chr(39) + ',' + chr(39) + 'Citação' + chr(39) + ')')} "
+                     f"THEN 0 WHEN {trib.format('')} THEN 1 ELSE 2 END, t.last_date DESC")
         base = f"""
             WITH matched AS (
                 SELECT m.account, m.thread_id, MAX(m.internal_date) AS last_date
@@ -200,12 +207,18 @@ def create_app() -> Flask:
         conds = []
         if unread_local:
             conds.append(f"NOT {read}")
-        # Destaques: notificações judiciais ainda não abertas no MarquesPro
+        # Destaques = janela de período (padrão: hoje); "anteriores" = antes do início da janela
         destaque = request.args.get("destaque")
         if destaque in ("1", "0"):
-            is_hl = (f"(EXISTS (SELECT 1 FROM messages mn WHERE mn.account=t.account AND mn.thread_id=t.thread_id "
-                     f"AND mn.tipo='TRIBUNAL') AND NOT {read})")
-            conds.append(is_hl if destaque == "1" else f"NOT {is_hl}")
+            hoje_ms = int(datetime.now().replace(hour=0, minute=0, second=0, microsecond=0).timestamp() * 1000)
+            desde = _int_arg("desde", hoje_ms)
+            ate = _int_arg("ate", None)
+            if destaque == "1":
+                conds.append(f"t.last_date >= {desde}")
+                if ate is not None:
+                    conds.append(f"t.last_date <= {ate}")
+            else:
+                conds.append(f"t.last_date < {desde}")
         flt = ("WHERE " + " AND ".join(conds)) if conds else ""
         total = db.one(f"{base} SELECT COUNT(*) AS n FROM matched t {flt}", params)["n"]
         sql = f"""{base}
@@ -213,7 +226,7 @@ def create_app() -> Flask:
                    (SELECT COUNT(*) FROM messages c WHERE c.account=t.account AND c.thread_id=t.thread_id) AS count,
                    {read} AS read_local
             FROM matched t {flt}
-            ORDER BY t.last_date DESC LIMIT ? OFFSET ?
+            ORDER BY {ordem} LIMIT ? OFFSET ?
         """
         result = [_thread_summary(t) for t in db.rows(sql, params + [limit, offset])]
         resp = jsonify(result)
@@ -570,15 +583,14 @@ def create_app() -> Flask:
         if not arquivos and not email_ref and not (f.get("instrucoes") or "").strip():
             return jsonify({"erro": "Anexe um documento (PDF/imagem), use o e-mail aberto ou escreva as informações."}), 400
         try:
-            out = ia.preencher(f.get("codigo", ""), f.get("instrucoes", ""), email_ref, arquivos)
+            out = ia.preencher_auto(f.get("codigo", ""), f.get("instrucoes", ""), email_ref, arquivos,
+                                    aceitar_visao=f.get("aceitar_visao") == "1")
         except ValueError as e:
             return jsonify({"erro": str(e)}), 400
         except RuntimeError as e:
             return jsonify({"erro": str(e)}), 400
         except Exception as e:  # erros da API (chave inválida, limite etc.)
             return jsonify({"erro": f"Falha ao consultar a IA: {getattr(e, 'message', None) or e}"}), 502
-        m = modelos.por_codigo(out["codigo"])
-        out["titulo"] = m["titulo"] if m else ""
         return jsonify(out)
 
     # ─── Preferências ─────────────────────────────────────────────────────
@@ -665,6 +677,13 @@ GRUPOS_NOTIF = {
     "citacoes": "m.tipo='TRIBUNAL' AND m.subtipo='Citação'",
     "notificacoes": "m.tipo='TRIBUNAL' AND COALESCE(m.subtipo,'') NOT IN ('Intimação','Citação')",
 }
+
+def _int_arg(nome: str, padrao):
+    try:
+        return int(request.args.get(nome))
+    except (TypeError, ValueError):
+        return padrao
+
 
 def _sem_ads_sql() -> str:
     """Exclui anúncios quando a preferência "ocultar anúncios" está ativa."""

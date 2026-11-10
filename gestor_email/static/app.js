@@ -233,8 +233,8 @@ function renderThreads() {
     list.innerHTML = `<div class="empty">${ic(state.folder.id === "NOTIF" ? "gavel" : "inbox")}${msg}</div>`; return;
   }
   const multi = !state.account && state.accounts.length > 1;
-  const secHl = `<div class="sec-head hl" title="Intimações, citações e notificações ainda não abertas">Destaques<b class="n">${state.hlCount}</b></div>`;
-  const secRest = `<div class="sec-head">Demais</div>`;
+  const secHl = `<div class="sec-head hl" title="E-mails recebidos hoje">Destaques de hoje<b class="n">${state.hlCount}</b></div>`;
+  const secRest = `<div class="sec-head">Anteriores</div>`;
   list.innerHTML = state.threads.map((t, i) => (state.hlCount && i === 0 ? secHl : "") + (state.hlCount && i === state.hlCount ? secRest : "") + rowHtml(t, i, multi)).join("")
     + (state.hlCount && state.threads.length === state.hlCount ? secRest + `<div class="empty">Nenhuma outra conversa nesta página.</div>` : "");
 }

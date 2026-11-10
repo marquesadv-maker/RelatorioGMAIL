@@ -189,8 +189,36 @@ def carregar() -> List[Dict]:
             if not v.startswith("BLOCO_") and v not in vistos:
                 vistos.append(v)
         md["campos"] = vistos
+        # Campos do texto principal (fora dos blocos opcionais) e campos de cada bloco
+        corpo_vars: List[str] = []
+        for v in _VAR.findall(md["assunto"] + "\n" + md["corpo"]):
+            if not v.startswith("BLOCO_") and v not in corpo_vars:
+                corpo_vars.append(v)
+        md["campos_corpo"] = corpo_vars
+        for b in md["blocos"].values():
+            b["campos"] = sorted(set(_VAR.findall(b["texto"])))
     return modelos
 
 
 def por_codigo(codigo: str) -> Dict:
     return next((m for m in carregar() if m["codigo"] == codigo), None)
+
+
+def montar_email(m: Dict, valores: Dict[str, str], blocos: Dict[str, Dict]) -> Dict[str, str]:
+    """Monta assunto e corpo a partir dos valores e dos blocos escolhidos (espelha o formulário da tela).
+
+    blocos: {"BLOCO_X": {"incluir": bool, "texto": str opcional}}; campo sem valor vira [PREENCHER: CAMPO].
+    """
+    def bloco(mt):
+        nome = mt.group(1)
+        sel = blocos.get(nome) or {}
+        if not sel.get("incluir"):
+            return ""
+        return sel.get("texto") if sel.get("texto") is not None else (m["blocos"].get(nome) or {}).get("texto", "")
+
+    def valor(mt):
+        return (valores.get(mt.group(1)) or "").strip() or f"[PREENCHER: {mt.group(1)}]"
+
+    corpo = re.sub(r"\{\{(BLOCO_[A-Z0-9_]+)\}\}", bloco, m["corpo"])
+    corpo = re.sub(r"\n{3,}", "\n\n", corpo)
+    return {"assunto": _VAR.sub(valor, m["assunto"] or ""), "corpo": _VAR.sub(valor, corpo)}
