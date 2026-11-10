@@ -180,6 +180,14 @@
             <p class="muted">Mensagens que o Gmail mandou para o spam só aparecem na caixa de entrada se forem de <b>clientes conhecidos</b> (já trocamos mensagens) ou <b>notificações/intimações</b>, sempre com o aviso "Veio do spam". O Gmail só é alterado se você clicar em "Não é spam".</p>
           </div>
         </div>
+        <div class="setting">
+          <div class="setting-name">IA nos modelos</div>
+          <div>
+            <label class="radio"><input type="checkbox" id="ia-ler-imagens"> <span><b>Ler PDF escaneado e imagem com a IA automaticamente</b> (gasta mais tokens; se desligado, pergunta antes).</span></label>
+            <label class="radio"><span><b>Prazo interno padrão:</b> <input type="number" id="prazo-interno-dias" min="1" max="60" placeholder="—"> dias úteis antes da data da audiência/perícia. Vazio = preencher manualmente.</span></label>
+            <p class="muted">A automação lê primeiro no seu computador; a IA só completa e confere o que faltar, citando o trecho do documento.</p>
+          </div>
+        </div>
       </section>
       <section id="tab-accounts" class="tab-pane hidden">
         <p class="muted">Cada usuário conecta a própria conta Google (ex.: mariaelisa@marquesss.com.br). O navegador abrirá a tela de autorização do Google.</p>

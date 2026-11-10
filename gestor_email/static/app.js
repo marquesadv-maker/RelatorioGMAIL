@@ -688,7 +688,7 @@ function setupAutocomplete(input) {
 // ─── Modelos de e-mail do escritório e preenchimento por IA ─────────────
 const MOD = {lista: null, aba: "modelo", arquivos: [], ia: null, slashIdx: 0, slashItens: [], preenchido: null};
 const BR_ISO = (v) => (/^\d{2}\/\d{2}\/\d{4}$/.test(v || "") ? v.split("/").reverse().join("-") : (v || ""));
-const ORIGEM_TXT = {documento: "do documento", automatico: "automático", ia: "pela IA", verificar: "IA: confira", pendente: "preencher"};
+const ORIGEM_TXT = {documento: "do documento", automatico: "automático", ia: "pela IA", verificar: "IA: confira", corrigido: "IA corrigiu: confira", regra: "regra do escritório", derivado: "deduzido", pendente: "preencher"};
 const AUTO_ITEM = {codigo: "IA", titulo: "Preencher a partir de um documento ou do e-mail aberto (automático)", grupo: "Automático", auto: true};
 const ROTULOS = {PROCESSO: "Nº do processo", RECLAMANTE: "Reclamante", RECLAMADA: "Reclamada", DATA: "Data", HORARIO: "Horário",
   MODALIDADE: "Modalidade (presencial, telepresencial, híbrida)", PERIODO: "Saudação (bom dia / boa tarde)", PRAZO_INTERNO: "Prazo interno para envio",
@@ -762,9 +762,9 @@ function renderFormModelo() {
   const processo = ((compose.refSubject || "").match(/\d{7}-\d{2}\.\d{4}\.\d\.\d{2}\.\d{4}/) || [""])[0];
   const campos = m.campos.map(c => {
     const id = `mpc-${c}`, cv = pre && pre.campos[c];
-    const origem = cv ? (cv.verificar ? "verificar" : cv.valor ? cv.origem : "pendente") : "";
+    const origem = cv ? (!cv.valor ? "pendente" : cv.corrigido_de ? "corrigido" : cv.verificar ? "verificar" : cv.origem) : "";
     const valor = cv ? cv.valor : (c === "PROCESSO" ? processo : "");
-    const tip = cv && cv.trecho ? ` title="No documento: ${esc(cv.trecho)}"` : "";
+    const tip = cv && (cv.trecho || cv.corrigido_de) ? ` title="${cv.corrigido_de ? `Leitura local era: ${esc(cv.corrigido_de)}. ` : ""}${cv.trecho ? `No documento: ${esc(cv.trecho)}` : ""}"` : "";
     const tag = origem ? `<span class="orig o-${origem}">${ORIGEM_TXT[origem]}</span>` : "";
     const cls = origem ? `org-${origem}` : "";
     if (c === "DATA") return `<label>${rotulo(c)} ${tag}<input id="${id}" class="${cls}"${tip} data-campo="${c}" type="date" value="${esc(BR_ISO(valor))}"></label>`;
@@ -785,11 +785,13 @@ function renderFormModelo() {
     const u = pre.uso || {};
     const uso = u.ia ? `IA usada em ${u.chamadas} consulta(s), cerca de ${((u.entrada || 0) + (u.saida || 0)).toLocaleString("pt-BR")} tokens.` : "Lido no seu computador, sem usar a IA (0 tokens).";
     banner = `<div class="mp-confirma"><b>Confira os dados antes de inserir.</b> Modelo ${esc(pre.codigo)} — ${esc(pre.titulo)}${pre.confianca !== "alta" ? " (sugerido: troque acima se não for o certo)" : ""}.
-      <div class="leg"><span class="orig o-documento">do documento</span><span class="orig o-ia">pela IA</span><span class="orig o-verificar">IA: confira</span><span class="orig o-pendente">preencher</span></div>
-      <div class="muted">${uso}${pre.observacoes ? " " + esc(pre.observacoes) : ""}</div></div>`;
+      <div class="leg"><span class="orig o-documento">do documento</span><span class="orig o-ia">pela IA</span><span class="orig o-corrigido">IA corrigiu: confira</span><span class="orig o-verificar">IA: confira</span><span class="orig o-regra">regra do escritório</span><span class="orig o-pendente">preencher</span></div>
+      <div class="muted">${uso}${pre.observacoes ? " " + esc(pre.observacoes) : ""}</div>
+      ${MOD.semIA ? `<div class="mp-semia"><b>A IA não completou os campos em branco porque não há chave configurada.</b> <button class="link-btn" id="mp-ir-chave">Configurar chave e completar com a IA</button></div>` : ""}</div>`;
   }
   pane.innerHTML = `${banner}<div class="mp-campos">${campos || '<span class="muted">Este modelo não tem campos variáveis.</span>'}</div>${blocos}
     ${m.regras ? `<details class="mp-regras"><summary>Orientações do modelo (não vão no e-mail)</summary>${esc(m.regras).replace(/\n/g, "<br>")}</details>` : ""}`;
+  const bc = $("#mp-ir-chave"); if (bc) bc.onclick = () => abrirPainel("ia", "");
 }
 function lerFormModelo() {
   const valores = {};
@@ -809,6 +811,7 @@ function inserirModelo() {
 }
 
 async function renderIA() {
+  MOD.aguardaChave = !!MOD.semIA;
   MOD.ia = await api("/api/ia/status");
   $("#mp-ia-key").classList.toggle("hidden", MOD.ia.configurada);  // a chave só é necessária para completar o que faltar
   $("#mp-key-remover").classList.toggle("hidden", MOD.ia.origem !== "arquivo local");
@@ -840,7 +843,9 @@ async function executarIA(aceitarVisao) {
       if (confirm(`O arquivo ${r.precisa_visao.join(", ")} é imagem ou PDF escaneado (sem texto). Para lê-lo, será enviado à IA, o que gasta mais tokens. Enviar?`)) return await executarIA(true);
       return;
     }
-    MOD.preenchido = r; MOD.arquivos = [];
+    MOD.preenchido = r;
+    MOD.semIA = !!r.ia_indisponivel && (r.pendencias || []).some(c => c !== "PRAZO_INTERNO");
+    if (!MOD.semIA) MOD.arquivos = [];   // sem chave: mantém os arquivos para completar com a IA depois
     await abrirPainel("modelo", r.codigo);   // mostra os dados para o advogado conferir
   } catch (e) { res.classList.remove("hidden"); res.textContent = e.message; }
   finally { btn.disabled = false; $("#mp-status").textContent = ""; }
@@ -968,6 +973,8 @@ function renderGeneral() {
   const v = state.settings.lida_no_gmail_conta_como_lida === "1" ? "1" : "0";
   $(`#leitura-${v}`).checked = true;
   $("#ocultar-anuncios").checked = state.settings.ocultar_anuncios !== "0";
+  $("#ia-ler-imagens").checked = state.settings.ia_ler_imagens_auto !== "0";
+  $("#prazo-interno-dias").value = state.settings.prazo_interno_dias || "";
 }
 function renderAccounts() {
   $("#acc-list").innerHTML = state.accounts.map(a => `<div class="card"><b>${esc(a.email)}</b>
@@ -1199,7 +1206,7 @@ function bind() {
   ["dragleave", "drop"].forEach(ev => $("#mp-drop").addEventListener(ev, (e) => { e.preventDefault(); $("#mp-drop").classList.remove("over"); }));
   $("#mp-drop").addEventListener("drop", (e) => adicionarArquivosIA(e.dataTransfer.files));
   $("#mp-ia-run").onclick = guard(executarIA);
-  $("#mp-key-save").onclick = guard(async () => { await api("/api/ia/config", {body: {api_key: $("#mp-key").value}}); $("#mp-key").value = ""; await renderIA(); toast("Chave da IA salva neste computador."); });
+  $("#mp-key-save").onclick = guard(async () => { await api("/api/ia/config", {body: {api_key: $("#mp-key").value}}); $("#mp-key").value = ""; const rodar = MOD.aguardaChave; await renderIA(); toast("Chave da IA salva neste computador."); if (rodar && (MOD.arquivos.length || compose.ref || $("#mp-instrucoes").value.trim())) { MOD.semIA = false; executarIA(); } });
   $("#mp-key-remover").onclick = guard(async () => { if (!confirm("Remover a chave da IA deste computador?")) return; await api("/api/ia/config", {body: {api_key: ""}}); await renderIA(); });
   // "/" no corpo do e-mail e no assunto abre o menu de modelos
   $("#c-editor").addEventListener("input", () => { const q = gatilhoSlashNoEditor(); if (q === null) $("#slash-menu").classList.add("hidden"); else mostrarSlash(q); });
@@ -1223,6 +1230,11 @@ function bind() {
     state.settings = await api("/api/settings", {body: {ocultar_anuncios: e.target.checked}});
     toast(e.target.checked ? "Anúncios e promoções saem da caixa de entrada." : "Anúncios voltam a aparecer na caixa de entrada.");
     await refreshStatus(); await loadThreads();
+  });
+  $("#ia-ler-imagens").onchange = guard(async (e) => { state.settings = await api("/api/settings", {body: {ia_ler_imagens_auto: e.target.checked}}); });
+  $("#prazo-interno-dias").onchange = guard(async (e) => {
+    state.settings = await api("/api/settings", {body: {prazo_interno_dias: e.target.value}});
+    toast(e.target.value ? `Prazo interno: ${e.target.value} dia(s) útil(eis) antes da data.` : "Prazo interno será preenchido manualmente.");
   });
   $("#acc-connect").onclick = guard(async () => {
     toast("Abra a janela do Google para autorizar a conta…");

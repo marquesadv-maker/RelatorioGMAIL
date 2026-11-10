@@ -596,8 +596,10 @@ def create_app() -> Flask:
         if not arquivos and not email_ref and not (f.get("instrucoes") or "").strip():
             return jsonify({"erro": "Anexe um documento (PDF/imagem), use o e-mail aberto ou escreva as informações."}), 400
         try:
+            dias = db.get_setting("prazo_interno_dias")
             out = ia.preencher_auto(f.get("codigo", ""), f.get("instrucoes", ""), email_ref, arquivos,
-                                    aceitar_visao=f.get("aceitar_visao") == "1")
+                                    aceitar_visao=f.get("aceitar_visao") == "1" or db.get_setting("ia_ler_imagens_auto") == "1",
+                                    prazo_interno_dias=int(dias) if dias.isdigit() and int(dias) > 0 else None)
         except ValueError as e:
             return jsonify({"erro": str(e)}), 400
         except RuntimeError as e:
@@ -675,7 +677,13 @@ def create_app() -> Flask:
     def settings_set():
         for k, v in (request.json or {}).items():
             try:
-                db.set_setting(k, "1" if v in (True, "1", 1) else "0")
+                if k == "prazo_interno_dias":   # número de dias úteis (1 a 60) ou vazio
+                    txt = str(v or "").strip()
+                    if txt and not (txt.isdigit() and 1 <= int(txt) <= 60):
+                        return jsonify({"erro": "Informe um número de dias úteis entre 1 e 60 (ou deixe vazio)."}), 400
+                    db.set_setting(k, txt)
+                else:
+                    db.set_setting(k, "1" if v in (True, "1", 1) else "0")
             except ValueError:
                 return jsonify({"erro": f"Preferência desconhecida: {k}"}), 400
         return jsonify(db.all_settings())

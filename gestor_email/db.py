@@ -320,6 +320,10 @@ DEFAULT_SETTINGS = {
     "lida_no_gmail_conta_como_lida": "0",
     # Anúncios/promoções saem da caixa de entrada (ficam na pasta "Anúncios e promoções")
     "ocultar_anuncios": "1",
+    # IA lê PDF escaneado/imagem automaticamente (gasta mais tokens); desligado, pede confirmação antes
+    "ia_ler_imagens_auto": "1",
+    # Regra do escritório: prazo interno = N dias úteis antes da data do ato (vazio = preencher manualmente)
+    "prazo_interno_dias": "",
 }
 
 

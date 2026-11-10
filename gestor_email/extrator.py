@@ -11,7 +11,7 @@ A IA só entra depois, para o que estas regras não resolverem.
 import io
 import re
 import unicodedata
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
 MESES = {"janeiro": 1, "fevereiro": 2, "março": 3, "marco": 3, "abril": 4, "maio": 5, "junho": 6, "julho": 7,
@@ -24,6 +24,28 @@ LINK = re.compile(r"https?://[^\s<>\"')\]]+", re.I)
 LINK_REUNIAO = re.compile(r"zoom|teams|meet\.google|webex|videoconfer|audienciavirtual|cnj\.jus|pje.*audiencia", re.I)
 PALAVRAS_DATA_BOA = re.compile(r"audi[eê]ncia|per[ií]cia|designad|realiz|marcad|comparec|prazo|vistoria", re.I)
 PALAVRAS_DATA_RUIM = re.compile(r"publicad|disponibiliz|assinad|expedid|protocol|distribu[ií]d|ajuizad|autua", re.I)
+
+
+def cnj_valido(numero: str) -> bool:
+    """Confere os dígitos verificadores do número único do processo (Resolução CNJ 65/2008, módulo 97)."""
+    m = re.fullmatch(r"(\d{7})-(\d{2})\.(\d{4})\.(\d)\.(\d{2})\.(\d{4})", numero or "")
+    if not m:
+        return False
+    nnnnnnn, dd, aaaa, j, tr, oooo = m.groups()
+    return 98 - (int(nnnnnnn + aaaa + j + tr + oooo + "00") % 97) == int(dd)
+
+
+def dias_uteis_antes(data_br: str, n: int) -> Optional[str]:
+    """Data n dias úteis (seg-sex; feriados não considerados) antes de data_br."""
+    try:
+        d = datetime.strptime(data_br, "%d/%m/%Y")
+    except ValueError:
+        return None
+    while n > 0:
+        d -= timedelta(days=1)
+        if d.weekday() < 5:
+            n -= 1
+    return d.strftime("%d/%m/%Y")
 
 
 def _n(t: str) -> str:
@@ -70,12 +92,11 @@ def _datas(texto: str) -> List[Tuple[int, str]]:
     return sorted(out)
 
 
-def _melhor_data(texto: str) -> Optional[Tuple[int, str]]:
+def _melhor_data(texto: str) -> Optional[Tuple[int, str, str]]:
+    """(posição, data dd/mm/aaaa, confiança). Sem nenhuma pista de que é a data do ato, devolve None."""
     cands = _datas(texto)
     if not cands:
         return None
-    if len(cands) == 1:
-        return cands[0]
     pont = []
     for pos, d in cands:
         antes = texto[max(0, pos - 140):pos]
@@ -84,10 +105,17 @@ def _melhor_data(texto: str) -> Optional[Tuple[int, str]]:
         pt -= 3 * len(PALAVRAS_DATA_RUIM.findall(antes[-80:]))
         pont.append((pt, -pos, pos, d))
     pont.sort(reverse=True)
-    return (pont[0][2], pont[0][3]) if pont[0][0] > 0 else None  # sem pistas: deixa para a IA/usuário
+    melhor = pont[0]
+    distintas = {d for _, d in cands}
+    if len(cands) == 1:
+        return cands[0][0], cands[0][1], "alta" if melhor[0] > 0 else "media"
+    if melhor[0] <= 0:
+        return None  # várias datas e nenhuma pista: deixa para a IA
+    empate = len(pont) > 1 and pont[1][0] == melhor[0] and pont[1][3] != melhor[3]
+    return melhor[2], melhor[3], "media" if (empate or len(distintas) > 2 and melhor[0] < 3) else "alta"
 
 
-def _horario(texto: str, pos_data: Optional[int]) -> Optional[Tuple[int, str]]:
+def _horario(texto: str, pos_data: Optional[int]) -> Optional[Tuple[int, str, str]]:
     regioes = []
     if pos_data is not None:
         regioes.append((pos_data, texto[pos_data:pos_data + 140]))
@@ -99,9 +127,11 @@ def _horario(texto: str, pos_data: Optional[int]) -> Optional[Tuple[int, str]]:
             if not (0 <= h <= 23) or (mm and int(mm) > 59):
                 continue
             ctx = trecho[max(0, m.start() - 12):m.start()].lower()
-            if not re.search(r"[àa]s\s*$|hor[aá]rio|hora", ctx) and base == 0:
+            com_as = bool(re.search(r"[àa]s\s*$|hor[aá]rio|hora", ctx))
+            if not com_as and base == 0:
                 continue
-            return base + m.start(), f"{h}h{mm}" if mm and mm != "00" else f"{h}h"
+            valor = f"{h}h{mm}" if mm and mm != "00" else f"{h}h"
+            return base + m.start(), valor, "alta" if (base != 0 and com_as) else "media"
     return None
 
 
@@ -112,47 +142,103 @@ def _nome_apos(texto: str, rotulos: str) -> Optional[Tuple[int, int, str]]:
     nome = m.group(1)
     nome = re.split(r"\s{2,}|\s+(?:reclamad[ao]s?|reclamantes?|advogad[ao]s?|cpf|cnpj|processo|r[ée]us?|autor(?:es|a)?|requerid[ao]s?|requerentes?)\b\s*[:\-–]",
                     nome, maxsplit=1, flags=re.I)[0]
-    nome = nome.strip(" .;,-–")
+    # Corta no fim da frase ("... Ltda. Valor da causa"), mas preserva abreviaturas societárias
+    for fim in re.finditer(r"\.\s+(?=[A-ZÀ-Ú])", nome):
+        ultimo = nome[:fim.start()].split()[-1].lower() if nome[:fim.start()].split() else ""
+        if ultimo not in {"ltda", "s/a", "s.a", "epp", "me", "eireli", "cia", "s.a.", "ltda."}:
+            nome = nome[:fim.start()]
+            break
+    nome = nome.strip(" ;,-–")
+    if nome.endswith(".") and not re.search(r"(?i)\b(ltda|s/a|s\.a|epp|eireli|cia)\.$", nome):
+        nome = nome[:-1]
     return (m.start(1), m.start(1) + len(nome), nome) if len(nome) >= 3 else None
 
 
-def extrair_campos(texto: str, agora: Optional[datetime] = None) -> Dict[str, Dict[str, Any]]:
-    """Campos encontrados com certeza razoável. Cada um: {valor, origem, trecho}."""
+_NOME_OK = re.compile(r"^[A-ZÀ-Úa-zà-ú0-9][A-ZÀ-Úa-zà-ú0-9 .'&/\-ªº,]+$")
+
+
+def extrair(texto: str, agora: Optional[datetime] = None) -> Tuple[Dict[str, Dict[str, Any]], List[str]]:
+    """Campos encontrados por regras, cada um com {valor, origem, trecho, confianca}, e avisos de ambiguidade."""
     out: Dict[str, Dict[str, Any]] = {}
+    avisos: List[str] = []
 
-    def add(campo: str, valor: str, trecho: str = "", origem: str = "documento"):
+    def add(campo: str, valor: str, trecho: str = "", origem: str = "documento", conf: str = "alta"):
         if valor:
-            out[campo] = {"valor": valor, "origem": origem, "trecho": trecho[:160]}
+            out[campo] = {"valor": valor, "origem": origem, "trecho": trecho[:160], "confianca": conf}
 
-    m = CNJ.search(texto)
-    if m:
-        add("PROCESSO", m.group(0), _trecho(texto, m.start(), m.end()))
+    procs = list(dict.fromkeys(CNJ.findall(texto)))
+    if procs:
+        # com mais de um número, prefere o que vem logo depois de "processo"
+        escolhido = procs[0]
+        if len(procs) > 1:
+            for mm in re.finditer(r"processo\s*(?:n[ºo.°]*\s*)?[:\-]?\s*(" + CNJ.pattern + ")", texto, re.I):
+                escolhido = mm.group(1)
+                break
+            avisos.append(f"O documento cita {len(procs)} números de processo; usei {escolhido}. Confira.")
+        pos = texto.index(escolhido)
+        valido = cnj_valido(escolhido)
+        if not valido:
+            avisos.append(f"O número {escolhido} não passa na conferência dos dígitos verificadores do CNJ: confira.")
+        add("PROCESSO", escolhido, _trecho(texto, pos, pos + len(escolhido)), conf="alta" if valido and len(procs) == 1 else "media")
+        if not valido:
+            out["PROCESSO"]["verificar"] = True
     d = _melhor_data(texto)
     if d:
-        add("DATA", d[1], _trecho(texto, d[0], d[0] + 10))
+        add("DATA", d[1], _trecho(texto, d[0], d[0] + 10), conf=d[2])
     h = _horario(texto, d[0] if d else None)
     if h:
-        add("HORARIO", h[1], _trecho(texto, h[0], h[0] + 8))
+        add("HORARIO", h[1], _trecho(texto, h[0], h[0] + 8), conf=h[2])
     tn = _n(texto)
+    tem_tele = bool(re.search(r"telepresencial|videoconfer|\bvirtual\b|\bzoom\b|\bteams\b|meet\.google", tn))
+    tem_pres = bool(re.search(r"\bpresencial", tn))
     if re.search(r"hibrid", tn):
         add("MODALIDADE", "híbrida", "menção a audiência híbrida")
-    elif re.search(r"telepresencial|videoconfer|\bvirtual\b|\bzoom\b|\bteams\b|meet\.google", tn):
-        add("MODALIDADE", "telepresencial", "menção a telepresencial/videoconferência")
-    elif re.search(r"\bpresencial", tn):
+    elif tem_tele:
+        add("MODALIDADE", "telepresencial", "menção a telepresencial/videoconferência", conf="media" if tem_pres else "alta")
+    elif tem_pres:
         add("MODALIDADE", "presencial", "menção a audiência presencial")
     for lk in LINK.finditer(texto):
         if LINK_REUNIAO.search(lk.group(0)):
             add("LINK", lk.group(0).rstrip(".,;"), _trecho(texto, lk.start(), lk.end(), 20))
             break
-    r = _nome_apos(texto, r"reclamante|autor(?:a)?|requerente|parte autora")
-    if r:
-        add("RECLAMANTE", r[2], _trecho(texto, r[0], r[1], 25))
-    r = _nome_apos(texto, r"reclamad[ao]s?|r[ée]u|requerid[ao]|parte r[ée]")
-    if r:
-        add("RECLAMADA", r[2], _trecho(texto, r[0], r[1], 25))
+    ta = re.search(r"audi[eê]ncia\s+(?:de\s+)?(concilia[cç][aã]o|instru[cç][aã]o|una|inaugural|julgamento)", texto, re.I)
+    if ta:
+        add("TIPO_AUDIENCIA", {"conciliacao": "conciliação", "instrucao": "instrução"}.get(_n(ta.group(1)), _n(ta.group(1))), ta.group(0))
+    vc = re.search(r"valor da causa[^R\n]{0,40}(R\$\s*[\d\.]+,\d{2})", texto, re.I)
+    if vc:
+        add("VALOR_CAUSA", vc.group(1), vc.group(0))
+    vara = re.search(r"\b(\d{1,3}\s*[ªaº]?\s*Vara do Trabalho(?:\s+de\s+[A-ZÀ-Ú][A-Za-zà-ú]+(?:\s+[A-ZÀ-Ú][A-Za-zà-ú]+)?)?)", texto)
+    if vara:
+        add("VARA", vara.group(1), vara.group(0))
+        add("ORGAO", vara.group(1), vara.group(0))
+    for campo, rotulos in (("RECLAMANTE", r"reclamante|autor(?:a)?|requerente|parte autora"),
+                           ("RECLAMADA", r"reclamad[ao]s?|r[ée]u|requerid[ao]|parte r[ée]")):
+        r = _nome_apos(texto, rotulos)
+        if r:
+            nome = r[2]
+            if campo == "RECLAMADA":  # razão social costuma terminar no tipo societário
+                ms = re.search(r"^(.*?\b(?:Ltda\.?|S/A|S\.A\.?|EPP|Eireli|Cia\.?|ME))(?=\s|$|[,;])", nome, re.I)
+                if ms:
+                    nome = ms.group(1)
+            seguro = len(nome.split()) >= 2 and not re.search(r"\d", nome) and len(nome) <= 90 and bool(_NOME_OK.match(nome))
+            add(campo, nome, _trecho(texto, r[0], r[1], 25), conf="alta" if seguro else "media")
     hora = (agora or datetime.now()).hour
     add("PERIODO", "bom dia" if hora < 12 else "boa tarde" if hora < 18 else "boa noite", "pelo horário atual", "automatico")
-    return out
+    _derivar(out)
+    return out, avisos
+
+
+def _derivar(c: Dict[str, Dict[str, Any]]) -> None:
+    """Campos que repetem outros (ex.: PARTE_A x PARTE_B = reclamante x reclamada)."""
+    mapa = {"PARTE_A": "RECLAMANTE", "PARTE_B": "RECLAMADA", "DATA_AUDIENCIA": "DATA",
+            "LINK_OU_ENDERECO": "LINK", "LOCAL_OU_LINK": "LINK", "LINK_OU_ENDERECO_REUNIAO": "LINK"}
+    for destino, origem in mapa.items():
+        if destino not in c and origem in c:
+            c[destino] = {"valor": c[origem]["valor"], "origem": "derivado", "trecho": f"igual a {origem}", "confianca": c[origem]["confianca"]}
+
+
+def extrair_campos(texto: str, agora: Optional[datetime] = None) -> Dict[str, Dict[str, Any]]:
+    return extrair(texto, agora)[0]
 
 
 # ─── Escolha do modelo por regras ────────────────────────────────────────────

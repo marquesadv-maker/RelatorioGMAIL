@@ -266,19 +266,19 @@ class GestorTest(unittest.TestCase):
         self.assertIn("[PREENCHER: PROCESSO]", r["corpo"])
         self.assertIn("IA não configurada", r["observacoes"])
 
-    def test_ia_prompt_minimo_e_verificacao(self):
-        from gestor_email import ia
+    def _cnj(self, n7="0004321", aa="2026", tr="02", o="0002"):
+        dd = 98 - (int(n7 + aa + "5" + tr + o + "00") % 97)
+        return f"{n7}-{dd:02d}.{aa}.5.{tr}.{o}"
+
+    def _ia_fake(self, *respostas):
+        """Cliente de IA simulado: devolve as respostas em ordem e registra as chamadas."""
         chamadas = []
 
         class R:
             stop_reason = "end_turn"
-            usage = type("U", (), {"input_tokens": 900, "output_tokens": 120, "cache_read_input_tokens": 0})()
-            content = [type("B", (), {"type": "text", "text": json.dumps({
-                "codigo": "PER-03", "campos": [
-                    {"nome": "RECLAMADA", "valor": "Empresa Exemplo Ltda", "trecho": "Reclamada: Empresa Exemplo Ltda"},
-                    {"nome": "OBJETO_PERICIA", "valor": "insalubridade", "trecho": "perícia de insalubridade"},
-                    {"nome": "PERITO", "valor": "Fulano Perito Inventado", "trecho": "inventado"}],
-                "blocos": [], "pendencias": [], "observacoes": ""})})()]
+            def __init__(self, dados):
+                self.usage = type("U", (), {"input_tokens": 700, "output_tokens": 90, "cache_read_input_tokens": 0})()
+                self.content = [type("B", (), {"type": "text", "text": json.dumps(dados)})()]
 
         class C:
             class beta:
@@ -286,22 +286,93 @@ class GestorTest(unittest.TestCase):
                     @staticmethod
                     def create(**kw):
                         chamadas.append(kw)
-                        return R()
-        texto = ("Perícia de insalubridade designada para 20/01/2027 às 9h, processo 0004321-10.2026.5.02.0002. "
-                 "Reclamante: Beltrano Silva. Reclamada: Empresa Exemplo Ltda. Prazo para assistente técnico: 5 dias.")
-        out = ia.preencher_auto("", texto, None, [], client=C)
-        self.assertEqual(len(chamadas), 1)
+                        return R(respostas[min(len(chamadas), len(respostas)) - 1])
+        return C, chamadas
+
+    def test_ia_prompt_minimo(self):
+        from gestor_email import ia
+        texto = (f"Perícia de insalubridade designada para 20/01/2027 às 9h, processo {self._cnj()}. "
+                 "Reclamante: Beltrano Silva. Reclamada: Empresa Exemplo Ltda. Local: Rua A, 1. Prazo para quesitos: 5 dias.")
+        C, chamadas = self._ia_fake({"codigo": "PER-03", "revisao": [], "campos": [], "blocos": [], "pendencias": [], "observacoes": ""})
+        ia.preencher_auto("PER-03", texto, None, [], client=C)
         kw = chamadas[0]
-        self.assertLess(len(kw["system"][0]["text"]), 1500)
+        self.assertLess(len(kw["system"][0]["text"]), 2500)
         pedido = kw["messages"][0]["content"][-1]["text"]
-        self.assertLess(len(pedido), 6000)
+        self.assertLess(len(pedido), 7000)
         self.assertNotIn("PAR-01", pedido)
-        self.assertEqual(kw["output_config"]["effort"], "low")
+        self.assertIn("trecho", kw["system"][0]["text"])
+
+    def test_ia_assertiva_preenche_o_que_falta_e_verifica(self):
+        from gestor_email import ia
+        proc = self._cnj()
+        texto = (f"Perícia de insalubridade designada para 20/01/2027 às 9h, processo {proc}. "
+                 "Reclamante: Beltrano Silva. Reclamada: Empresa Exemplo Ltda. Local da perícia: Rua das Flores, 100, São Paulo. "
+                 "Prazo para quesitos: 5 dias.")
+        # 1ª chamada: preenche o que faltou (inclui um PERITO inventado); 2ª (verificação): não consegue sustentar o PERITO
+        C, chamadas = self._ia_fake(
+            {"codigo": "PER-03", "revisao": [], "campos": [
+                {"nome": "LOCAL", "valor": "Rua das Flores, 100, São Paulo", "trecho": "Local da perícia: Rua das Flores, 100, São Paulo"},
+                {"nome": "PRAZO_QUESITOS", "valor": "5 dias", "trecho": "Prazo para quesitos: 5 dias"}],
+             "blocos": [{"nome": "BLOCO_DOC_PERICIA", "incluir": False, "texto": ""}], "pendencias": [], "observacoes": ""},
+            {"campos": []})
+        out = ia.preencher_auto("PER-03", texto, None, [], client=C)
+        self.assertEqual(out["codigo"], "PER-03")
+        # o que a leitura local fez
         self.assertEqual(out["campos"]["PROCESSO"]["origem"], "documento")
-        self.assertEqual(out["campos"]["RECLAMADA"]["origem"], "documento")
-        self.assertTrue(out["uso"]["ia"] and out["uso"]["entrada"] == 900)
-        if "PERITO" in out["campos"]:
-            self.assertTrue(out["campos"]["PERITO"]["verificar"])
+        self.assertEqual(out["campos"]["DATA"]["valor"], "20/01/2027")
+        self.assertEqual(out["campos"]["PARTE_A"]["valor"], "Beltrano Silva")          # derivado de RECLAMANTE
+        # o que faltava foi preenchido pela IA automaticamente, com prova no documento
+        self.assertEqual(out["campos"]["LOCAL"]["origem"], "ia")
+        self.assertFalse(out["campos"]["LOCAL"]["verificar"])
+        self.assertEqual(out["campos"]["PRAZO_QUESITOS"]["valor"], "5 dias")
+        self.assertEqual(out["pendencias"], [])
+        self.assertNotIn("[PREENCHER", out["corpo"])
+        self.assertEqual(len(chamadas), 1)   # nada a verificar: segunda passada não é necessária
+
+    def test_ia_nao_aceita_valor_sem_prova_e_faz_segunda_passada(self):
+        from gestor_email import ia
+        texto = (f"Perícia designada para 20/01/2027 às 9h, processo {self._cnj()}. Reclamante: Beltrano Silva. "
+                 "Reclamada: Empresa Exemplo Ltda. Prazo para quesitos: 5 dias.")
+        C, chamadas = self._ia_fake(
+            {"codigo": "PER-03", "revisao": [], "campos": [
+                {"nome": "LOCAL", "valor": "Fórum Trabalhista da Barra Funda", "trecho": "Fórum Trabalhista da Barra Funda"},
+                {"nome": "PRAZO_QUESITOS", "valor": "5 dias", "trecho": "Prazo para quesitos: 5 dias"}],
+             "blocos": [], "pendencias": [], "observacoes": ""},
+            {"campos": [{"nome": "LOCAL", "valor": "", "trecho": ""}]})
+        out = ia.preencher_auto("PER-03", texto, None, [], client=C)
+        self.assertEqual(len(chamadas), 2)                                  # 2ª passada de verificação
+        self.assertIn("LOCAL", out["pendencias"])                          # valor inventado foi descartado
+        self.assertEqual(out["campos"]["LOCAL"]["origem"], "pendente")
+        self.assertIn("[PREENCHER: LOCAL]", out["corpo"])
+        self.assertNotIn("Barra Funda", out["corpo"])
+        self.assertEqual(out["campos"]["PRAZO_QUESITOS"]["valor"], "5 dias")
+
+    def test_ia_corrige_valor_lido_localmente_e_cnj_invalido_e_sinalizado(self):
+        from gestor_email import ia
+        # Número com dígito verificador errado e nome ambíguo: a IA confere os dois
+        texto = ("Audiência de conciliação telepresencial dia 15/12/2026 às 14h30, processo 0001234-56.2026.5.02.0001. "
+                 "Reclamante: Fulano de Tal 123 Reclamada: Empresa Exemplo Ltda.")
+        C, chamadas = self._ia_fake({"codigo": "AUD-02", "revisao": [
+            {"nome": "RECLAMANTE", "correto": False, "valor": "Fulano de Tal", "trecho": "Reclamante: Fulano de Tal"},
+            {"nome": "PROCESSO", "correto": True, "valor": "0001234-56.2026.5.02.0001", "trecho": "processo 0001234-56.2026.5.02.0001"}],
+            "campos": [], "blocos": [], "pendencias": [], "observacoes": ""})
+        out = ia.preencher_auto("", texto, None, [], client=C)
+        self.assertEqual(out["campos"]["RECLAMANTE"]["valor"], "Fulano de Tal")
+        self.assertTrue(out["campos"]["RECLAMANTE"]["verificar"])           # corrigido pela IA: advogado confere
+        self.assertIn("Fulano de Tal 123", out["campos"]["RECLAMANTE"]["corrigido_de"])
+        self.assertTrue(out["campos"]["PROCESSO"].get("verificar"))        # dígitos do CNJ não batem
+        self.assertIn("dígitos verificadores", out["observacoes"])
+
+    def test_sem_chave_sinaliza_ia_indisponivel_e_prazo_interno_pela_regra(self):
+        from gestor_email import ia
+        texto = (f"Audiência una presencial dia 15/12/2026 às 9h30, processo {self._cnj()}. "
+                 "Reclamante: Fulano de Tal Reclamada: Empresa Exemplo Ltda.")
+        out = ia.preencher_auto("DEF-01", texto, None, [], prazo_interno_dias=3)
+        self.assertTrue(out["ia_indisponivel"])
+        self.assertEqual(out["campos"]["PRAZO_INTERNO"]["origem"], "regra")
+        self.assertEqual(out["campos"]["PRAZO_INTERNO"]["valor"], "10/12/2026")   # 3 dias úteis antes de 15/12/2026 (3ª)
+        out = ia.preencher_auto("DEF-01", texto, None, [])
+        self.assertEqual(out["campos"]["PRAZO_INTERNO"]["origem"], "pendente")     # sem regra, nunca calcula sozinha
 
     def test_pdf_com_texto_local_e_imagem_pede_confirmacao(self):
         try:
@@ -438,6 +509,17 @@ class GestorTest(unittest.TestCase):
                                      "mode": "encaminhar", "ref_message_id": b})
         self.assertEqual(por()["Citação"], False)
         self.assertFalse(self.get(f"/api/threads/{ME}/{self.g.msg_store[b]['threadId']}")["sem_envio"])
+
+    def test_prazo_interno_pela_regra_configurada(self):
+        n = self._cnj()
+        texto = f"Audiência una presencial dia 15/12/2026 às 9h30, processo {n}. Reclamante: Fulano de Tal Reclamada: Empresa Exemplo Ltda."
+        r = self.post("/api/ia/preencher", data={"codigo": "DEF-01", "instrucoes": texto})
+        self.assertEqual(r["campos"]["PRAZO_INTERNO"]["origem"], "pendente")
+        self.assertEqual(self.client.post("/api/settings", headers=self.h, json={"prazo_interno_dias": "abc"}).status_code, 400)
+        self.post("/api/settings", json={"prazo_interno_dias": "3"})
+        r = self.post("/api/ia/preencher", data={"codigo": "DEF-01", "instrucoes": texto})
+        self.assertEqual(r["campos"]["PRAZO_INTERNO"]["valor"], "10/12/2026")
+        self.assertTrue(r["ia_indisponivel"])
 
     def test_anexo_svg_nunca_inline(self):
         mid = self.g.add_message("X <x@ex.com>", "Img")
