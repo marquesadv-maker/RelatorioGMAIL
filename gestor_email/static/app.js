@@ -119,10 +119,9 @@ const initial = (s) => esc(((s || "?").trim()[0] || "?").toUpperCase());
 function labelsOf(acc) { return state.labels.filter(l => l.account === acc); }
 function labelById(acc, id) { return state.labels.find(l => l.account === acc && l.id === id); }
 function userLabels(acc) { return labelsOf(acc).filter(l => l.type === "user"); }
-function chipHtml(l, removable, quiet) {
-  const st = quiet ? `style="background:transparent;color:#444746;border:1px solid ${esc(l.bg_color || "#c4c7c5")}"`
-    : l.bg_color ? `style="background:${esc(l.bg_color)};color:${esc(l.text_color || "#000")}"` : "";
-  return `<span class="chip" ${st} data-label="${esc(l.id)}">${esc(l.name)}${removable ? `<span class="ms x" title="Remover marcador">close</span>` : ""}</span>`;
+function chipHtml(l, removable) {
+  // Marcador do Gmail: etiqueta neutra com um ponto na cor do próprio marcador (visual calmo, mesma cor do Gmail)
+  return `<span class="chip lab" data-label="${esc(l.id)}"><i class="dot" style="background:${esc(l.bg_color || "#9aa0a6")}"></i>${esc(l.name)}${removable ? `<span class="ms x" title="Remover marcador">close</span>` : ""}</span>`;
 }
 
 // Sanitiza HTML de terceiros antes de inseri-lo no editor (resposta/encaminhamento)
@@ -367,16 +366,25 @@ function rowHtml(t, i, multi) {
   {
     const chips = t.label_ids.map(id => labelById(t.account, id)).filter(l => l && l.type === "user")
       .filter(l => !(state.folder.name && l.name === state.folder.name));
-    const chipsHtml = chips.slice(0, 2).map(l => chipHtml(l, false, true)).join("") +
+    const chipsHtml = chips.slice(0, 2).map(l => chipHtml(l, false, false)).join("") +
       (chips.length > 2 ? `<span class="chip mais-n" title="${esc(chips.slice(2).map(l => l.name).join(", "))}">+${chips.length - 2}</span>` : "");
     const atts = (t.anexos || []).map(n => `<span class="att-chip">${ic("description", "sm")}${esc(n)}</span>`).join("");
     const starred = t.label_ids.includes("STARRED");
-    const hl = t.notificacao && !t.read_local;
+    const prio = t.prioridade || [];
+    const hl = (prio.length || t.notificacao) && !t.read_local;
     const pal = t.palavras || [];
     const pend = t.pendencia;
-    const pendChip = pend ? `<span class="chip pend ${pend.status}" title="${esc(pend.status === "em_execucao" ? "Tratativa em execução" : "Cliente perguntou e ainda não foi respondido")}: ${esc(pend.trecho)}">${ic(pend.status === "em_execucao" ? "pending" : "reply", "sm")}${pend.status === "em_execucao" ? "Em execução" : `Sem resposta${pend.dias ? ` · ${pend.dias}d` : ""}`}</span>` : "";
-    const novoChip = t.novo ? `<span class="chip novo" title="Conversa nova de hoje, fora da cadeia de e-mails">${ic("fiber_new", "sm")}Novo</span>` : "";
-    return `<div class="row-t ${t.read_local ? "" : "unread"} ${hl ? "hl" : ""} ${t.novo ? "novo" : ""} ${pal.length ? "enfase" : ""} ${state.selected.has(i) ? "selected" : ""}" data-i="${i}">
+    // Sistema de etiquetas: neutras por padrão; só a prioridade de leitura usa cor forte
+    const tag = (cls, icone, texto, titulo) => `<span class="tag ${cls}" title="${esc(titulo)}">${icone ? ic(icone, "sm") : ""}${esc(texto)}</span>`;
+    const prioChips = prio.slice(0, 2).map(p => tag("prio", "", p, `Prioridade de leitura: ${p}`)).join("") + (prio.length > 2 ? tag("prio", "", `+${prio.length - 2}`, prio.slice(2).join(", ")) : "");
+    const atrasada = pend && pend.status === "pendente" && pend.dias >= 2;
+    const pendChip = pend ? tag(`pend ${atrasada ? "atraso" : ""}`, pend.status === "em_execucao" ? "pending" : "reply",
+      pend.status === "em_execucao" ? "Em execução" : `Sem resposta${pend.dias ? ` · ${pend.dias}d` : ""}`,
+      `${pend.status === "em_execucao" ? "Tratativa em execução" : "Cliente perguntou e ainda não foi respondido"}: ${pend.trecho}`) : "";
+    const novoChip = t.novo ? tag("novo", "", "Novo", "Conversa nova de hoje, fora da cadeia de e-mails") : "";
+    const spamChip = t.resgatado ? tag("spam", "report", "Veio do spam", `Estava no spam do Gmail e foi trazida para cá (${t.resgatado === "cliente" ? "remetente conhecido" : "parece notificação judicial"}). Confira o remetente.`) : "";
+    const notifChip = t.notificacao && !prio.includes(t.notificacao) ? tag("juris", "gavel", t.notificacao, "Notificação judicial") : "";
+    return `<div class="row-t ${t.read_local ? "" : "unread"} ${hl ? "hl" : ""} ${prio.length ? "prio" : ""} ${pal.length ? "enfase" : ""} ${state.selected.has(i) ? "selected" : ""}" data-i="${i}">
       <div class="lead">
         <span class="cell"><input type="checkbox" class="sel" ${state.selected.has(i) ? "checked" : ""} aria-label="Selecionar"></span>
         <button class="star ${starred ? "on" : ""}" title="${starred ? "Com estrela" : "Sem estrela"}">${ic("star", starred ? "fill" : "")}</button>
@@ -384,7 +392,7 @@ function rowHtml(t, i, multi) {
       </div>
       <div class="from">${esc(t.senders)}${t.count > 1 ? `<span class="cnt">${t.count}</span>` : ""}</div>
       <div class="mid">
-        <div class="line1">${novoChip}${pendChip}${t.resgatado ? `<span class="chip spam" title="Estava no spam do Gmail e foi trazida para cá (${t.resgatado === "cliente" ? "remetente conhecido" : "parece notificação judicial"}). Confira o remetente.">${ic("report", "sm")}Veio do spam</span>` : ""}${t.notificacao ? `<span class="chip notif" title="Notificação judicial">${ic("gavel", "sm")}${esc(t.notificacao)}</span>` : ""}${chipsHtml}${t.sem_envio ? `<span class="alerta-envio" title="Nenhum e-mail enviado sobre esta notificação">${ic("error", "sm")}</span>` : ""}
+        <div class="line1">${prioChips}${novoChip}${pendChip}${spamChip}${notifChip}${chipsHtml}${t.sem_envio ? `<span class="alerta-envio" title="Nenhum e-mail enviado sobre esta notificação">${ic("error", "sm")}</span>` : ""}
           <span class="subj"><span class="subj-t">${realce(t.subject, pal)}</span><span class="snip"> - ${realce(t.snippet, pal)}</span></span></div>
         ${atts ? `<div class="att-chips">${atts}</div>` : ""}
       </div>

@@ -204,10 +204,10 @@ def _connect() -> sqlite3.Connection:
             conn.executescript(SCHEMA)
             # Migração de bancos criados antes do contador de notificações
             cols = {r[1] for r in conn.execute("PRAGMA table_info(messages)")}
-            for col in ("tipo", "subtipo", "triagem"):
+            for col in ("tipo", "subtipo", "triagem", "prio"):
                 if col not in cols:
                     conn.execute(f"ALTER TABLE messages ADD COLUMN {col} TEXT")
-            for col in ("bulk", "triagem_v"):
+            for col in ("bulk", "triagem_v", "prio_v"):
                 if col not in cols:
                     conn.execute(f"ALTER TABLE messages ADD COLUMN {col} INTEGER NOT NULL DEFAULT 0")
             conn.execute("CREATE INDEX IF NOT EXISTS ix_msg_tipo ON messages(tipo)")
@@ -259,8 +259,8 @@ def upsert_message(account: str, m: Dict[str, Any]) -> bool:
             """
             INSERT INTO messages (id, account, thread_id, internal_date, from_raw,
                 from_name, from_email, to_raw, cc_raw, subject, snippet, label_ids,
-                message_id_header, references_header, has_attachments, tipo, subtipo, bulk)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                message_id_header, references_header, has_attachments, tipo, subtipo, bulk, prio, prio_v)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(account, id) DO UPDATE SET
                 thread_id=excluded.thread_id,
                 label_ids=excluded.label_ids,
@@ -275,6 +275,7 @@ def upsert_message(account: str, m: Dict[str, Any]) -> bool:
                 m["references_header"], 1 if m.get("has_attachments") else 0,
                 *classify.classify(m["from_raw"], m["subject"], m["snippet"]),
                 1 if m.get("bulk") else 0,
+                classify.prioridade(m["subject"], m["snippet"]), classify.PRIO_VERSAO,
             ),
         )
         _set_labels(c, account, m["id"], m["label_ids"])
@@ -338,6 +339,16 @@ def set_account_state(email: str, **fields):
         return
     cols = ", ".join(f"{k}=?" for k in fields)
     execute(f"UPDATE accounts SET {cols} WHERE email=?", (*fields.values(), email))
+
+
+def backfill_prioridade() -> int:
+    """Calcula a prioridade de leitura das mensagens já guardadas (e recalcula se as regras mudarem)."""
+    pend = rows("SELECT account, id, subject, snippet FROM messages WHERE prio_v<?", (classify.PRIO_VERSAO,))
+    with connection() as c:
+        for r in pend:
+            c.execute("UPDATE messages SET prio=?, prio_v=? WHERE account=? AND id=?",
+                      (classify.prioridade(r["subject"], r["snippet"]), classify.PRIO_VERSAO, r["account"], r["id"]))
+    return len(pend)
 
 
 def backfill_tipos() -> int:

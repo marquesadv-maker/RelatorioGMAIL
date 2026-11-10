@@ -231,7 +231,7 @@ class GestorTest(unittest.TestCase):
         hoje_ms = int(__import__("datetime").datetime.now().replace(hour=0, minute=0, second=0, microsecond=0).timestamp() * 1000)
         self.assertEqual(self._assuntos(base), ["Oi hoje"])
         sete = self.get(f"{base}&desde={hoje_ms - 6 * dia}")
-        self.assertEqual([t["subject"] for t in sete][:2], ["Intimação - Processo 1", "Publicação no Diário Oficial"])
+        self.assertEqual(sorted(t["subject"] for t in sete[:2]), ["Intimação - Processo 1", "Publicação no Diário Oficial"])  # DJE e intimação: prioridade de leitura
         self.assertEqual(len(sete), 3)
         self.assertEqual(len(self.get(f"{base}&desde={hoje_ms - 29 * dia}")), 3)
         self.assertEqual(self._assuntos(f"/api/threads?label=INBOX&destaque=0&desde={hoje_ms - 29 * dia}"), ["Antigo"])
@@ -239,8 +239,8 @@ class GestorTest(unittest.TestCase):
         self.assertEqual(sorted(t["subject"] for t in esp), ["Intimação - Processo 1", "Publicação no Diário Oficial"])
         self.get(f"/api/threads/{ME}/{sete[0]['thread_id']}")
         depois = self.get(f"{base}&desde={hoje_ms - 6 * dia}")
-        self.assertNotEqual(depois[0]["subject"], "Intimação - Processo 1")
-        self.assertEqual(self.get("/api/status")["notificacoes"]["pendentes_por_grupo"]["notificacoes"], 1)
+        self.assertNotEqual(depois[0]["subject"], sete[0]["subject"])
+        self.assertEqual(self.get("/api/status")["notificacoes"]["pendentes_por_grupo"]["intimacoes"], 1)
 
     def test_modelos_e_ia_economica(self):
         ms = self.get("/api/modelos")
@@ -620,6 +620,27 @@ class GestorTest(unittest.TestCase):
         est = self.get("/api/integridade")
         self.assertEqual(est["nivel"], "erro")
         self.assertIn("parada", est["mensagem"])
+
+    def test_prioridade_de_leitura(self):
+        self.g.add_message("Cliente <c@ex.com>", "Bom dia", "Apenas um oi")
+        self.g.add_message("Cliente <c2@ex.com>", "Pedido", "Solicito a elaboração de um contrato de prestação de serviços")
+        self.g.add_message("Cliente <c3@ex.com>", "Parecer", "Gostaria de solicitar parecer sobre a rescisão")
+        self.g.add_message("Sistema <no-reply@tj.jus.br>", "Notificação - Domicílio Judicial Eletrônico", "Há comunicação")
+        self.g.add_message("Sistema <x@mpt.mp.br>", "Notificação ao Ministério Público do Trabalho", "Prazo")
+        self.g.add_message("PJe <pje@trt2.jus.br>", "Publicação no DJE", "Disponibilizada")
+        self.g.add_message("Loja <l@promo.com>", "Intimação com desconto", "Oferta", extra_headers=[{"name": "List-Unsubscribe", "value": "<mailto:x@y.com>"}])
+        sync.sync_account(ME)
+        r = self.get("/api/threads?label=INBOX&prioridade=1&destaque=1")
+        prio = {t["subject"]: t["prioridade"] for t in r}
+        self.assertEqual(prio["Pedido"], ["Contrato"])
+        self.assertEqual(prio["Parecer"], ["Parecer"])
+        self.assertEqual(prio["Notificação - Domicílio Judicial Eletrônico"], ["Domicílio Judicial"])
+        self.assertEqual(prio["Notificação ao Ministério Público do Trabalho"], ["MPT"])
+        self.assertEqual(prio["Publicação no DJE"], ["DJE"])
+        self.assertEqual(prio["Bom dia"], [])
+        self.assertEqual(r[-1]["subject"], "Bom dia")           # sem prioridade, por último
+        self.assertEqual(len([t for t in r if t["prioridade"]]), 5)   # anúncio não conta
+        self.assertNotIn("Intimação com desconto", [t["subject"] for t in r[:5]])
 
     def test_prazo_interno_pela_regra_configurada(self):
         n = self._cnj()

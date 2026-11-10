@@ -482,3 +482,63 @@ mark.kw{background:#ffe08a;color:#3b2a00;border-radius:3px;padding:0 2px;font-we
 .integ-pop .kv{display:flex;justify-content:space-between;gap:12px;font-size:13px;padding:2px 0}
 .integ-pop .kv b{font-weight:500;font-variant-numeric:tabular-nums}
 .integ-pop p.muted{font-size:12px;margin:0 0 8px}
+
+/* ══ Refinamento visual v2: menos cor, mais hierarquia ═════════════════════════
+   Regra: tudo é neutro (cinza) e só a PRIORIDADE DE LEITURA usa cor forte. */
+.tag{display:inline-flex;align-items:center;gap:3px;height:20px;padding:0 8px;border-radius:4px;background:#eef0f3;color:#444746;font-size:11.5px;font-weight:500;line-height:20px;white-space:nowrap;flex-shrink:0;letter-spacing:.01em}
+.tag .ms{font-size:14px;width:14px;color:#80868b}
+.tag.prio{background:#a8201a;color:#fff;font-weight:600;letter-spacing:.03em;text-transform:uppercase;font-size:10.5px}
+.tag.novo{background:transparent;color:#1a56c4;padding:0 6px 0 4px}
+.tag.novo::before{content:"";width:7px;height:7px;border-radius:50%;background:#1a73e8;margin-right:3px}
+.tag.pend{background:#eef0f3}
+.tag.pend .ms{color:#b06000}
+.tag.pend.atraso{background:transparent;color:#a8201a;box-shadow:inset 0 0 0 1px #e8b4b0}
+.tag.pend.atraso .ms{color:#a8201a}
+.tag.spam .ms{color:#b06000}
+.tag.juris .ms{color:#5f6368}
+.row-t .chip{height:20px;line-height:20px;padding:0 7px;border-radius:4px;font-size:11.5px;font-weight:500;border:0}
+.row-t.hl,.row-t.prio{box-shadow:inset 3px 0 0 #a8201a;background:#fff}
+.row-t.hl:hover,.row-t.prio:hover{box-shadow:inset 3px 0 0 #a8201a,0 1px 2px 0 rgba(60,64,67,.3),0 1px 3px 1px rgba(60,64,67,.15)}
+.row-t.novo{box-shadow:none}
+mark.kw{background:none;color:inherit;font-weight:700;box-shadow:inset 0 -2px 0 #d9a93a;border-radius:0;padding:0}
+.alerta-envio{color:#b06000;opacity:1}
+
+/* Atalhos do topo: tom de Gmail, só o ícone leva cor */
+.qbtn{background:#fff;border:1px solid #dadce0;color:#1f1f1f}
+.qbtn:hover{background:#f6f8fc;box-shadow:none}
+.qbtn .qic{background:#f1f3f4}
+.qbtn .qn{background:#5f6368;font-size:12px;min-width:22px;height:22px}
+.qbtn.jud .qic{color:#a8201a;background:#fce8e6}.qbtn.jud .qn{background:#a8201a}
+.qbtn.nov .qic{color:#1a73e8;background:#e8f0fe}.qbtn.nov .qn{background:#5f6368}
+.qbtn.pen .qic{color:#b06000;background:#fef3e0}.qbtn.pen .qn{background:#5f6368}
+.qbtn.jud,.qbtn.nov,.qbtn.pen{color:#1f1f1f}
+.qbtn.on,.qbtn.jud.on,.qbtn.nov.on,.qbtn.pen.on{background:#d3e3fd;border-color:#d3e3fd}
+.qbtn.on .qic{background:#fff}
+
+/* Selo de integridade e contador do topo mais discretos */
+.pill-count.integ.ok{background:transparent;color:#3c4043}
+.pill-count.integ.ok .ms{color:#1e8e3e}
+.pill-count.integ.atencao{background:#fef3e0;color:#6a4100}
+.pill-count.notif{background:#f1f3f4;color:#3c4043}
+.pill-count.notif:hover{background:#e8eaed}
+.pill-count.notif .ms{color:#a8201a}
+
+/* Pendências e faixas */
+.pend-card{box-shadow:inset 3px 0 0 #dadce0}
+.pend-card.atraso{box-shadow:inset 3px 0 0 #a8201a;background:#fff}
+.pend-card.em_execucao{box-shadow:inset 3px 0 0 #1a73e8}
+.pend-card.concluida{box-shadow:inset 3px 0 0 #dadce0}
+.pend-q{border-left-color:#dadce0}
+.chip.pend,.chip.pend.pendente,.chip.pend.em_execucao,.chip.pend.leve{background:#eef0f3;color:#444746}
+.chip.pend.pendente{background:transparent;color:#a8201a;box-shadow:inset 0 0 0 1px #e8b4b0}
+.pend-banner,.pend-banner.em_execucao{background:#f1f3f4;color:#3c4043}
+.pend-banner .ms{color:#b06000}
+.sec-head.hl{color:#5f6368}.sec-head.hl .ms{color:#a8201a}.sec-head .n{color:#5f6368}
+.chip.notif{background:#eef0f3;color:#444746}
+
+.chip.lab{display:inline-flex;align-items:center;gap:5px;background:#eef0f3;color:#444746;border:0;border-radius:4px;padding:0 7px;height:20px;line-height:20px;font-size:11.5px;font-weight:500}
+.chip.lab .dot{width:8px;height:8px;border-radius:50%;flex-shrink:0;display:inline-block}
+.chip.lab .x{font-size:14px;width:14px;margin-left:2px;color:#5f6368}
+.qbtn.jud,.qbtn.nov,.qbtn.pen{background:#fff;border-color:#dadce0}
+.qbtn.jud:hover,.qbtn.nov:hover,.qbtn.pen:hover{background:#f6f8fc}
+.qbtn.jud.on,.qbtn.nov.on,.qbtn.pen.on{background:#d3e3fd;border-color:#d3e3fd}

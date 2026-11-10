@@ -29,6 +29,7 @@ SYSTEM_LABEL_NAMES = {
 def create_app() -> Flask:
     app = Flask(__name__, static_folder="static", static_url_path="/static")
     db.backfill_tipos()
+    db.backfill_prioridade()
     triagem.reprocessar()
     app.config["SESSION_TOKEN"] = secrets.token_urlsafe(32)
     app.config["MAX_CONTENT_LENGTH"] = 30 * 1024 * 1024  # anexos até ~25 MB
@@ -221,8 +222,11 @@ def create_app() -> Flask:
             # Prioridade: intimação/citação não aberta > outra notificação não aberta > não lidas > lidas; depois, mais recentes
             trib = ("EXISTS (SELECT 1 FROM messages mp WHERE mp.account=t.account AND mp.thread_id=t.thread_id "
                     "AND mp.tipo='TRIBUNAL'{})")
-            ordem = (f"CASE WHEN {read} THEN 4 WHEN {trib.format(' AND mp.subtipo IN (' + chr(39) + 'Intimação' + chr(39) + ',' + chr(39) + 'Citação' + chr(39) + ')')} "
-                     f"THEN 0 WHEN {trib.format('')} THEN 1 WHEN {novo_cond} THEN 2 ELSE 3 END, t.last_date DESC")
+            prio = ("EXISTS (SELECT 1 FROM messages mq WHERE mq.account=t.account AND mq.thread_id=t.thread_id "
+                    "AND mq.prio IS NOT NULL AND mq.bulk=0 AND COALESCE(mq.triagem,'')<>'anuncio')")
+            ordem = (f"CASE WHEN {read} THEN 6 WHEN {prio} THEN 0 "
+                     f"WHEN {trib.format(' AND mp.subtipo IN (' + chr(39) + 'Intimação' + chr(39) + ',' + chr(39) + 'Citação' + chr(39) + ')')} "
+                     f"THEN 1 WHEN {trib.format('')} THEN 2 WHEN {novo_cond} THEN 3 ELSE 4 END, t.last_date DESC")
             params_ordem = [hoje_ms]
         base = f"""
             WITH matched AS (
@@ -938,7 +942,7 @@ def _read_sql(acc: str, tid: str) -> str:
 def _thread_summary(t: Dict[str, Any], pend: Optional[Dict] = None, palavras: Optional[List[str]] = None,
                     hoje_ms: Optional[int] = None) -> Dict[str, Any]:
     msgs = db.rows(
-        "SELECT id, from_name, from_email, subject, snippet, label_ids, internal_date, has_attachments, tipo, subtipo, triagem, body_json, bulk "
+        "SELECT id, from_name, from_email, subject, snippet, label_ids, internal_date, has_attachments, tipo, subtipo, triagem, body_json, bulk, prio "
         "FROM messages WHERE account=? AND thread_id=? ORDER BY internal_date",
         (t["account"], t["thread_id"]))
     last = msgs[-1]
@@ -957,6 +961,8 @@ def _thread_summary(t: Dict[str, Any], pend: Optional[Dict] = None, palavras: Op
                 and not (primeira["tipo"] == "TRIBUNAL" and pendencias.remetente_oficial(primeira["from_email"])) and primeira["triagem"] != "anuncio" and not primeira["bulk"])
     return {
         "novo": novo,
+        "prioridade": list(dict.fromkeys(x for m in msgs if m["prio"] and not m["bulk"] and m["triagem"] != "anuncio"
+                                         for x in m["prio"].split("|"))),
         "palavras": pendencias.achar_palavras(f"{msgs[0]['subject'] or ''} {last['snippet'] or ''}", palavras),
         "pendencia": ({"status": p["status"], "dias": p["dias_espera"], "trecho": p["trecho"]} if p else None),
         "account": t["account"],
