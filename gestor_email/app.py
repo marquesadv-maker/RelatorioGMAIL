@@ -8,8 +8,10 @@ import html
 import json
 import re
 import secrets
+import sqlite3
+import unicodedata
 from datetime import datetime
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from flask import Flask, Response, abort, jsonify, request, send_from_directory
 from googleapiclient.errors import HttpError
@@ -251,7 +253,8 @@ def create_app() -> Flask:
         # Leitura apenas local: não altera UNREAD no Gmail.
         db.execute("INSERT OR IGNORE INTO local_read (account, thread_id) VALUES (?,?)", (account, thread_id))
         labels = sorted({l for m in msgs for l in m["label_ids"]})
-        return jsonify({"account": account, "thread_id": thread_id, "messages": msgs, "label_ids": labels})
+        return jsonify({"account": account, "thread_id": thread_id, "messages": msgs, "label_ids": labels,
+                        "sem_envio": bool(_sem_envio(account, thread_id))})
 
     @app.post("/api/threads/<account>/<thread_id>/lida")
     def mark_read_local(account, thread_id):
@@ -449,7 +452,12 @@ def create_app() -> Flask:
                 e["n"] += 1
                 if name and not e["name"]:
                     e["name"] = name
-        return jsonify(sorted(counts.values(), key=lambda x: -x["n"])[:10])
+        achados = sorted(counts.values(), key=lambda x: -x["n"])[:8]
+        grupos = [{"grupo": True, "name": f"{e['nome']} › {sg['nome']}", "email": f"{len((sg['para'] + ',' + sg['cc'] + ',' + sg['cco']).strip(',').split(','))} e-mail(s) padrão",
+                   "para": sg["para"], "cc": sg["cc"], "cco": sg["cco"]}
+                  for e in _grupos() for sg in e["subgrupos"]
+                  if _sem_acento(q) in _sem_acento(f"{e['nome']} {sg['nome']}")][:5]
+        return jsonify(grupos + achados)
 
     # ─── Envio, resposta e encaminhamento ─────────────────────────────────
 
@@ -499,6 +507,11 @@ def create_app() -> Flask:
         db.upsert_message(account, m)
         db.execute("INSERT OR IGNORE INTO local_read (account, thread_id) VALUES (?,?)", (account, m["thread_id"]))
         sync.apply_rules(svc, account, [m])
+        if ref_id:
+            ref_row = db.one("SELECT thread_id FROM messages WHERE account=? AND id=?", (account, ref_id))
+            if ref_row:
+                db.execute("INSERT OR IGNORE INTO envios (account, thread_id, message_id) VALUES (?,?,?)",
+                           (account, ref_row["thread_id"], sent["id"]))
         extra = json.loads(f.get("labels", "[]") or "[]")
         if extra:
             gmail_ops.add_message_labels(svc, account, sent["id"], extra)
@@ -593,6 +606,65 @@ def create_app() -> Flask:
             return jsonify({"erro": f"Falha ao consultar a IA: {getattr(e, 'message', None) or e}"}), 502
         return jsonify(out)
 
+    # ─── Grupos de empresas e subgrupos de destinatários ──────────────────
+
+    @app.get("/api/grupos")
+    def grupos_lista():
+        return jsonify(_grupos())
+
+    @app.post("/api/grupos")
+    def grupos_salvar():
+        d = request.json or {}
+        nome = (d.get("nome") or "").strip()
+        if not nome:
+            return jsonify({"erro": "Informe o nome da empresa/grupo"}), 400
+        try:
+            if d.get("id"):
+                db.execute("UPDATE grupos_empresas SET nome=?, observacao=? WHERE id=?",
+                           (nome, (d.get("observacao") or "").strip(), d["id"]))
+                gid = d["id"]
+            else:
+                gid = db.execute("INSERT INTO grupos_empresas (nome, observacao) VALUES (?,?)",
+                                 (nome, (d.get("observacao") or "").strip()))
+        except sqlite3.IntegrityError:
+            return jsonify({"erro": "Já existe uma empresa/grupo com esse nome"}), 400
+        return jsonify({"id": gid})
+
+    @app.delete("/api/grupos/<int:gid>")
+    def grupos_excluir(gid):
+        db.execute("DELETE FROM subgrupos WHERE empresa_id=?", (gid,))
+        db.execute("DELETE FROM grupos_empresas WHERE id=?", (gid,))
+        return jsonify({"ok": True})
+
+    @app.post("/api/grupos/<int:gid>/subgrupos")
+    def subgrupos_salvar(gid):
+        d = request.json or {}
+        nome = (d.get("nome") or "").strip()
+        if not nome:
+            return jsonify({"erro": "Informe o nome do subgrupo (ex.: RH, Jurídico, Diretoria)"}), 400
+        try:
+            para, cc, cco = (_emails(d.get(k)) for k in ("para", "cc", "cco"))
+        except ValueError as e:
+            return jsonify({"erro": str(e)}), 400
+        if not (para or cc or cco):
+            return jsonify({"erro": "Informe ao menos um e-mail padrão"}), 400
+        try:
+            if d.get("id"):
+                db.execute("UPDATE subgrupos SET nome=?, para=?, cc=?, cco=? WHERE id=? AND empresa_id=?",
+                           (nome, para, cc, cco, d["id"], gid))
+                sid = d["id"]
+            else:
+                sid = db.execute("INSERT INTO subgrupos (empresa_id, nome, para, cc, cco) VALUES (?,?,?,?,?)",
+                                 (gid, nome, para, cc, cco))
+        except sqlite3.IntegrityError:
+            return jsonify({"erro": "Já existe um subgrupo com esse nome nesta empresa"}), 400
+        return jsonify({"id": sid})
+
+    @app.delete("/api/subgrupos/<int:sid>")
+    def subgrupos_excluir(sid):
+        db.execute("DELETE FROM subgrupos WHERE id=?", (sid,))
+        return jsonify({"ok": True})
+
     # ─── Preferências ─────────────────────────────────────────────────────
 
     @app.get("/api/settings")
@@ -678,6 +750,66 @@ GRUPOS_NOTIF = {
     "notificacoes": "m.tipo='TRIBUNAL' AND COALESCE(m.subtipo,'') NOT IN ('Intimação','Citação')",
 }
 
+def _sem_acento(t: str) -> str:
+    return unicodedata.normalize("NFD", t.lower()).encode("ascii", "ignore").decode()
+
+
+_EMAIL_RE = re.compile(r"^[^@\s,;<>]+@[^@\s,;<>]+\.[^@\s,;<>]+$")
+
+
+def _emails(valor) -> str:
+    """Normaliza uma lista de e-mails (vírgula, ponto e vírgula ou linha) e rejeita endereços inválidos."""
+    itens = [x.strip().lower() for x in re.split(r"[,;\n]+", valor or "") if x.strip()]
+    for x in itens:
+        if not _EMAIL_RE.match(x):
+            raise ValueError(f"E-mail inválido: {x}")
+    return ", ".join(dict.fromkeys(itens))
+
+
+def _grupos() -> List[Dict[str, Any]]:
+    out = []
+    for e in db.rows("SELECT * FROM grupos_empresas ORDER BY nome COLLATE NOCASE"):
+        e["subgrupos"] = db.rows("SELECT * FROM subgrupos WHERE empresa_id=? ORDER BY nome COLLATE NOCASE", (e["id"],))
+        out.append(e)
+    return out
+
+
+_CNJ = re.compile(r"\d{7}-\d{2}\.\d{4}\.\d\.\d{2}\.\d{4}")
+
+
+def _sem_envio(account: str, thread_id: str) -> Optional[bool]:
+    """Notificação judicial sem nenhum e-mail enviado sobre ela?
+
+    None = a conversa não é uma notificação. True = nenhum e-mail enviado (mostra alerta).
+    Conta como enviado: resposta na própria conversa; envio feito pela ferramenta a partir dela;
+    ou e-mail enviado depois (pelo Gmail ou pela ferramenta) com o mesmo assunto ou nº de processo.
+    """
+    ms = db.rows("SELECT subject, snippet, internal_date, tipo, label_ids FROM messages "
+                 "WHERE account=? AND thread_id=? ORDER BY internal_date", (account, thread_id))
+    if not any(m["tipo"] == "TRIBUNAL" for m in ms):
+        return None
+    if any("SENT" in json.loads(m["label_ids"]) for m in ms):
+        return False
+    if db.one("SELECT 1 AS x FROM envios WHERE account=? AND thread_id=? LIMIT 1", (account, thread_id)):
+        return False
+    texto = " ".join(f"{m['subject'] or ''} {m['snippet'] or ''}" for m in ms)
+    chaves = []
+    proc = _CNJ.search(texto)
+    if proc:
+        chaves.append(proc.group(0).lower())
+    nucleo = re.sub(r"^(?:(?:re|res|enc|fwd?)\s*:\s*)+", "", (ms[0]["subject"] or "").strip(), flags=re.I).lower()
+    if len(nucleo) >= 12:
+        chaves.append(nucleo)
+    if not chaves:
+        return True
+    cond = " OR ".join("instr(lower(x.subject || ' ' || x.snippet), ?) > 0" for _ in chaves)
+    achou = db.one(
+        "SELECT 1 AS x FROM messages x JOIN message_labels l ON l.account=x.account AND l.message_id=x.id AND l.label_id='SENT' "
+        f"WHERE x.account=? AND x.internal_date>=? AND ({cond}) LIMIT 1",
+        [account, ms[0]["internal_date"]] + chaves)
+    return achou is None
+
+
 def _int_arg(nome: str, padrao):
     try:
         return int(request.args.get(nome))
@@ -760,6 +892,7 @@ def _thread_summary(t: Dict[str, Any]) -> Dict[str, Any]:
         "last_message_id": last["id"],
         "notificacao": next((m["subtipo"] or "Outras" for m in msgs if m["tipo"] == "TRIBUNAL"), None),
         "important": "IMPORTANT" in labels,
+        "sem_envio": bool(_sem_envio(t["account"], t["thread_id"])),
         "resgatado": next((m["triagem"].split(":", 1)[1] for m in msgs
                            if (m.get("triagem") or "").startswith("resgatado") and "SPAM" in json.loads(m["label_ids"])), None),
         "anuncio": any(m.get("triagem") == "anuncio" for m in msgs),

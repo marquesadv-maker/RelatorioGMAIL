@@ -34,6 +34,47 @@ const state = {
   lastNotif: null, notifHoje: null, status: null, search: "", searchGmail: false, current: null,
 };
 
+// ─── Período dos Destaques ───────────────────────────────────────────────
+const PERIODOS = [
+  {id: "hoje", nome: "Hoje", dias: 1}, {id: "2d", nome: "2 dias", dias: 2}, {id: "3d", nome: "3 dias", dias: 3},
+  {id: "7d", nome: "1 semana", dias: 7}, {id: "30d", nome: "1 mês", dias: 30},
+];
+function lerPeriodo() {
+  try { const v = JSON.parse(localStorage.getItem("mp_periodo") || "null"); if (v && v.tipo) return v; } catch (_) {}
+  return {tipo: "hoje", de: "", ate: "", so: false};
+}
+function salvarPeriodo() { try { localStorage.setItem("mp_periodo", JSON.stringify(state.periodo)); } catch (_) {} }
+const fmtD = (d) => d.toLocaleDateString("pt-BR", {day: "2-digit", month: "2-digit"});
+function janelaPeriodo() {
+  const p = state.periodo, base = new Date(); base.setHours(0, 0, 0, 0);
+  if (p.tipo === "custom" && p.de) {
+    const de = new Date(p.de + "T00:00:00"), ate = new Date((p.ate || p.de) + "T23:59:59.999");
+    return {desde: de.getTime(), ate: ate.getTime(), rotulo: `${fmtD(de)} a ${fmtD(ate)}`, soPeriodo: true};
+  }
+  const def = PERIODOS.find(x => x.id === p.tipo) || PERIODOS[0];
+  base.setDate(base.getDate() - (def.dias - 1));
+  return {desde: base.getTime(), ate: null, rotulo: def.nome, soPeriodo: !!p.so};
+}
+state.periodo = lerPeriodo();
+function menuPeriodo() {
+  const menu = $("#menu-periodo"); closeMenus(menu);
+  const p = state.periodo;
+  menu.innerHTML = PERIODOS.map(x => `<label><input type="radio" name="per" value="${x.id}" ${p.tipo === x.id ? "checked" : ""}> ${x.nome}</label>`).join("") +
+    `<label><input type="radio" name="per" value="custom" ${p.tipo === "custom" ? "checked" : ""}> Período específico</label>
+     <div class="per-custom"><input type="date" id="per-de" value="${esc(p.de || "")}" aria-label="De"><span>a</span><input type="date" id="per-ate" value="${esc(p.ate || "")}" aria-label="Até"></div>
+     <label><input type="checkbox" id="per-so" ${p.so ? "checked" : ""}> Mostrar só este período (ocultar anteriores)</label>
+     <div class="menu-foot"><button data-ok>Aplicar</button></div>`;
+  menu.classList.remove("hidden");
+  menu.onclick = (e) => e.stopPropagation();
+  $("[data-ok]", menu).onclick = guard(async () => {
+    const tipo = $("input[name=per]:checked", menu).value, de = $("#per-de").value, ate = $("#per-ate").value;
+    if (tipo === "custom" && !de) { toast("Informe a data inicial do período.", true); return; }
+    if (tipo === "custom" && ate && ate < de) { toast("A data final é anterior à inicial.", true); return; }
+    state.periodo = {tipo, de, ate, so: $("#per-so").checked}; salvarPeriodo();
+    menu.classList.add("hidden"); state.offset = 0; await loadThreads();
+  });
+}
+
 // ─── API ─────────────────────────────────────────────────────────────────
 async function apiRaw(path, opts = {}) {
   const headers = Object.assign({"X-Gestor-Token": TOKEN}, opts.headers || {});
@@ -178,10 +219,15 @@ function renderTabs() {
       title="${g.id ? `${g.name} ainda não abertas no MarquesPro: ${pend[g.id] || 0}` : "Mostrar todas as conversas"}">
     ${ic(state.grupo === g.id ? "check" : g.icon, "sm")}<span>${g.name}</span>${g.id && pend[g.id] ? `<b class="n">${pend[g.id]}</b>` : ""}</button>`).join("");
   box.insertAdjacentHTML("beforeend", `<button class="filter-chip ${so ? "on" : ""}" data-unread title="Mostrar só conversas não lidas no MarquesPro">${ic(so ? "check" : "mark_email_unread", "sm")}<span>Não lidas</span></button>`);
-  $$("button", box).forEach(b => b.onclick = guard(async () => {
+  $$("button[data-grupo], button[data-unread]", box).forEach(b => b.onclick = guard(async () => {
     if ("unread" in b.dataset) $("#only-unread").checked = !$("#only-unread").checked; else state.grupo = b.dataset.grupo;
     state.offset = 0; await loadThreads();
   }));
+  if (state.folder.id === "INBOX") {
+    const jan = janelaPeriodo();
+    box.insertAdjacentHTML("beforeend", `<div class="dropdown periodo"><button class="filter-chip" id="btn-periodo" title="Período dos Destaques">${ic("date_range", "sm")}<span>Destaques: ${esc(jan.rotulo)}</span>${ic("arrow_drop_down", "sm")}</button><div class="menu hidden" id="menu-periodo"></div></div>`);
+    $("#btn-periodo").onclick = (e) => { e.stopPropagation(); menuPeriodo(); };
+  }
 }
 
 async function loadThreads() {
@@ -199,14 +245,16 @@ async function loadThreads() {
     else if (state.folder.id === "NOTIF") { p.label = "ALL"; p.tipo = "TRIBUNAL"; }
     else p.label = state.folder.id;
     if (state.grupo && ["INBOX", "NOTIF"].includes(state.folder.id) && !state.folder.name) p.grupo = state.grupo;
-    // Caixa de entrada: destaques (notificações não abertas) no topo, como a "Prioritária" do Gmail
+    // Caixa de entrada: Destaques do período escolhido, por prioridade (intimações/citações não abertas primeiro)
     const withHl = state.folder.id === "INBOX" && !state.folder.name && !state.search && !state.grupo && !p.nao_lidas;
+    state.jan = withHl ? janelaPeriodo() : null;
     if (withHl) {
-      if (state.offset === 0) highlights = await api(`/api/threads?${qs(Object.assign({}, p, {destaque: 1, limit: 100, offset: 0}))}`);
-      p.destaque = 0;
+      const j = state.jan;
+      if (state.offset === 0 || j.soPeriodo) highlights = await api(`/api/threads?${qs(Object.assign({}, p, {destaque: 1, desde: j.desde, ate: j.ate || "", prioridade: 1, limit: 200, offset: 0}))}`);
+      p.destaque = 0; p.desde = j.desde;
     }
-    const r = await apiRaw(`/api/threads?${qs(p)}`);
-    data = r.data; total = +(r.headers.get("X-Total-Count") || data.length);
+    if (state.jan && state.jan.soPeriodo) { data = []; total = 0; }
+    else { const r = await apiRaw(`/api/threads?${qs(p)}`); data = r.data; total = +(r.headers.get("X-Total-Count") || data.length); }
   }
   state.hlCount = highlights.length;
   state.threads = highlights.concat(data); state.total = total;
@@ -229,14 +277,17 @@ function renderThreads() {
   renderPager();
   if (!state.threads.length) {
     const msg = state.search ? "Nenhuma mensagem corresponde à sua pesquisa." :
+      state.jan && state.jan.soPeriodo ? `Nenhum e-mail no período (${state.jan.rotulo}).` :
       state.folder.id === "NOTIF" ? "Nenhuma notificação judicial por aqui." : state.folder.id === "ANUNCIOS" ? "Nenhum anúncio ou promoção." : "Nenhuma conversa nesta pasta.";
     list.innerHTML = `<div class="empty">${ic(state.folder.id === "NOTIF" ? "gavel" : "inbox")}${msg}</div>`; return;
   }
   const multi = !state.account && state.accounts.length > 1;
-  const secHl = `<div class="sec-head hl" title="E-mails recebidos hoje">Destaques de hoje<b class="n">${state.hlCount}</b></div>`;
-  const secRest = `<div class="sec-head">Anteriores</div>`;
+  const rot = state.jan ? state.jan.rotulo : "hoje";
+  const secHl = `<div class="sec-head hl" title="E-mails do período, com intimações e citações não abertas primeiro">Destaques · ${esc(rot)}<b class="n">${state.hlCount}</b></div>`;
+  const soPer = state.jan && state.jan.soPeriodo;
+  const secRest = soPer ? "" : `<div class="sec-head">Anteriores</div>`;
   list.innerHTML = state.threads.map((t, i) => (state.hlCount && i === 0 ? secHl : "") + (state.hlCount && i === state.hlCount ? secRest : "") + rowHtml(t, i, multi)).join("")
-    + (state.hlCount && state.threads.length === state.hlCount ? secRest + `<div class="empty">Nenhuma outra conversa nesta página.</div>` : "");
+    + (!soPer && state.hlCount && state.threads.length === state.hlCount ? secRest + `<div class="empty">Nenhuma outra conversa nesta página.</div>` : "");
 }
 
 function rowHtml(t, i, multi) {
@@ -256,7 +307,7 @@ function rowHtml(t, i, multi) {
       </div>
       <div class="from">${esc(t.senders)}${t.count > 1 ? `<span class="cnt">${t.count}</span>` : ""}</div>
       <div class="mid">
-        <div class="line1">${t.resgatado ? `<span class="chip spam" title="Estava no spam do Gmail e foi trazida para cá (${t.resgatado === "cliente" ? "remetente conhecido" : "parece notificação judicial"}). Confira o remetente.">${ic("report", "sm")}Veio do spam</span>` : ""}${t.notificacao ? `<span class="chip notif" title="Notificação judicial">${ic("gavel", "sm")}${esc(t.notificacao)}</span>` : ""}${chipsHtml}
+        <div class="line1">${t.resgatado ? `<span class="chip spam" title="Estava no spam do Gmail e foi trazida para cá (${t.resgatado === "cliente" ? "remetente conhecido" : "parece notificação judicial"}). Confira o remetente.">${ic("report", "sm")}Veio do spam</span>` : ""}${t.notificacao ? `<span class="chip notif" title="Notificação judicial">${ic("gavel", "sm")}${esc(t.notificacao)}</span>` : ""}${chipsHtml}${t.sem_envio ? `<span class="alerta-envio" title="Nenhum e-mail enviado sobre esta notificação">${ic("error", "sm")}</span>` : ""}
           <span class="subj"><span class="subj-t">${esc(t.subject)}</span><span class="snip"> - ${esc(t.snippet)}</span></span></div>
         ${atts ? `<div class="att-chips">${atts}</div>` : ""}
       </div>
@@ -302,6 +353,7 @@ function renderThreadView() {
       <span class="local-note" title="Abrir aqui não marca a mensagem como lida no Gmail (${esc(d.account)})">${ic("visibility", "sm")}</span>
     </div>
     ${spamInfo ? `<div class="spam-banner">${ic("report")}<div><b>Esta conversa estava no spam do Gmail.</b> Foi trazida para a caixa de entrada porque ${spamInfo === "cliente" ? "o remetente é conhecido (já trocamos mensagens)" : "parece uma notificação judicial"}. Confira o remetente antes de abrir links ou anexos.</div><button class="btn" id="tv-nao-spam">Não é spam</button></div>` : ""}
+    ${d.sem_envio ? `<div class="envio-aviso">${ic("error", "sm")}<span>Nenhum e-mail enviado sobre esta notificação.</span><button class="link-btn" id="tv-escrever">Escrever e-mail ao cliente</button></div>` : ""}
     <div class="tv-head">
       <h2 class="tv-subject">${esc(msgs[0].subject)}${notif ? `<span class="chip notif">${ic("gavel", "sm")}${esc(notif.subtipo || "Notificação")}</span>` : ""}<span id="tv-labels">${labelChips}</span></h2>
     </div>
@@ -317,6 +369,12 @@ function renderThreadView() {
     await api(`/api/threads/${encodeURIComponent(d.account)}/${d.thread_id}/nao-lida`, {method: "POST"});
     const t = state.threads.find(x => x.thread_id === d.thread_id); if (t) t.read_local = false;
     showList(); renderTabs(); renderThreads(); refreshStatus();
+  });
+  if ($("#tv-escrever")) $("#tv-escrever").onclick = guard(async () => {
+    // Abre o encaminhamento e já lê o documento/e-mail desta notificação (primeiro no computador, IA só se faltar)
+    await startReply("encaminhar", d.account, msgs[msgs.length - 1].id);
+    await abrirPainel("ia", "");
+    executarIA();
   });
   if ($("#tv-nao-spam")) $("#tv-nao-spam").onclick = guard(async () => {
     await api(`/api/threads/${encodeURIComponent(d.account)}/${d.thread_id}/nao-spam`, {method: "POST"});
@@ -540,10 +598,63 @@ async function sendCompose() {
 }
 
 // Autocompletar destinatários (nome aparece junto ao e-mail)
+// Grupos de empresas / subgrupos de destinatários
+function mesclarEmails(input, lista) {
+  const atual = input.value.split(",").map(x => x.trim()).filter(Boolean);
+  const ja = new Set(atual.map(x => ((x.match(/<([^>]+)>/) || [, x])[1] || "").toLowerCase()));
+  (lista || "").split(",").map(x => x.trim()).filter(Boolean).forEach(e => { if (!ja.has(e.toLowerCase())) { atual.push(e); ja.add(e.toLowerCase()); } });
+  input.value = atual.length ? atual.join(", ") + ", " : "";
+}
+function aplicarGrupo(g, alvo) {
+  const juntos = [g.para, g.cc, g.cco].filter(Boolean).join(", ");
+  if (alvo === "c-cc") { $("#c-cc-row").classList.remove("hidden"); mesclarEmails($("#c-cc"), juntos); }
+  else if (alvo === "c-bcc") { $("#c-bcc-row").classList.remove("hidden"); mesclarEmails($("#c-bcc"), juntos); }
+  else {
+    mesclarEmails($("#c-to"), g.para || (g.cc || g.cco ? "" : ""));
+    if (g.cc) { $("#c-cc-row").classList.remove("hidden"); mesclarEmails($("#c-cc"), g.cc); }
+    if (g.cco) { $("#c-bcc-row").classList.remove("hidden"); mesclarEmails($("#c-bcc"), g.cco); }
+  }
+  toast(`E-mails padrão de ${g.name} adicionados.`);
+}
+async function menuGrupos() {
+  const menu = $("#c-grupos-menu"); closeMenus(menu);
+  const gs = await api("/api/grupos");
+  const n = (sg) => [sg.para, sg.cc, sg.cco].filter(Boolean).join(",").split(",").filter(Boolean).length;
+  menu.innerHTML = (gs.length ? gs.map(e => `<div class="menu-title">${esc(e.nome)}</div>` + (e.subgrupos.length
+      ? e.subgrupos.map(sg => `<div class="mi" data-e="${e.id}" data-s="${sg.id}">${ic("groups", "sm")}<span>${esc(sg.nome)}</span><small>${n(sg)} e-mail(s)</small></div>`).join("")
+      : `<div class="mi off">Sem subgrupos</div>`)).join("") : `<div class="menu-title">Nenhum grupo cadastrado</div>`)
+    + `<div class="menu-foot"><button data-gerir>Gerenciar grupos…</button></div>`;
+  menu.classList.remove("hidden");
+  menu.onclick = (e) => e.stopPropagation();
+  $$(".mi[data-s]", menu).forEach(d => d.onclick = () => {
+    const e = gs.find(x => x.id == d.dataset.e), sg = e.subgrupos.find(x => x.id == d.dataset.s);
+    menu.classList.add("hidden"); aplicarGrupo({name: `${e.nome} › ${sg.nome}`, para: sg.para, cc: sg.cc, cco: sg.cco}, "c-to");
+  });
+  $("[data-gerir]", menu).onclick = () => { menu.classList.add("hidden"); openSettings("tab-grupos"); };
+}
+async function renderGrupos() {
+  const gs = await api("/api/grupos"), box = $("#g-lista");
+  box.innerHTML = gs.map(e => `<div class="card" data-eid="${e.id}">
+    <div class="g-head"><b>${esc(e.nome)}</b>${e.observacao ? `<span class="muted"> · ${esc(e.observacao)}</span>` : ""}<span class="spacer"></span>
+      <button class="btn danger" data-del-emp="${e.id}">Excluir empresa</button></div>
+    <table class="rules"><thead><tr><th>Subgrupo</th><th>Para</th><th>Cc</th><th>Cco</th><th></th></tr></thead><tbody>
+      ${e.subgrupos.map(sg => `<tr><td>${esc(sg.nome)}</td><td>${esc(sg.para)}</td><td>${esc(sg.cc)}</td><td>${esc(sg.cco)}</td>
+        <td><button class="btn" data-edit-sg='${esc(JSON.stringify(sg))}'>Editar</button> <button class="btn danger" data-del-sg="${sg.id}">Excluir</button></td></tr>`).join("")
+        || `<tr><td colspan="5" class="muted">Nenhum subgrupo ainda.</td></tr>`}</tbody></table>
+    <div class="g-form" data-form="${e.id}"><input data-f="nome" placeholder="Subgrupo (ex.: RH, Jurídico, Diretoria)"><input data-f="para" placeholder="Para (e-mails separados por vírgula)">
+      <input data-f="cc" placeholder="Cc"><input data-f="cco" placeholder="Cco"><input type="hidden" data-f="id">
+      <button class="btn primary" data-save-sg="${e.id}">Salvar subgrupo</button></div></div>`).join("") || `<p class="muted">Nenhuma empresa cadastrada.</p>`;
+}
+
 function setupAutocomplete(input) {
   const box = $(".ac", input.parentElement);
   let timer, items = [], on = -1;
   const pick = (c) => {
+    if (c.grupo) {  // grupo cadastrado: troca o texto digitado pelos e-mails padrão
+      const resto = input.value.split(",").slice(0, -1).join(",").trim();
+      input.value = resto ? resto + ", " : "";
+      box.classList.add("hidden"); aplicarGrupo(c, input.id); input.focus(); return;
+    }
     const parts = input.value.split(",");
     parts[parts.length - 1] = " " + (c.name ? `${c.name} <${c.email}>` : c.email);
     input.value = parts.join(",").replace(/^\s+/, "") + ", ";
@@ -556,7 +667,7 @@ function setupAutocomplete(input) {
     timer = setTimeout(guard(async () => {
       items = await api(`/api/contacts?q=${encodeURIComponent(term)}`); on = -1;
       if (!items.length) { box.classList.add("hidden"); return; }
-      box.innerHTML = items.map((c, i) => `<div data-i="${i}"><span class="av" style="background:${colorFor(c.email)}">${initial(c.name || c.email)}</span>
+      box.innerHTML = items.map((c, i) => `<div data-i="${i}"><span class="av" style="background:${c.grupo ? "#188038" : colorFor(c.email)}">${c.grupo ? ic("groups", "sm") : initial(c.name || c.email)}</span>
         <span>${esc(c.name || c.email)}<small>${esc(c.email)}</small></span></div>`).join("");
       $$("div[data-i]", box).forEach(d => d.onmousedown = (e) => { e.preventDefault(); pick(items[+d.dataset.i]); });
       box.classList.remove("hidden");
@@ -575,7 +686,10 @@ function setupAutocomplete(input) {
 }
 
 // ─── Modelos de e-mail do escritório e preenchimento por IA ─────────────
-const MOD = {lista: null, aba: "modelo", arquivos: [], ia: null, slashIdx: 0, slashItens: []};
+const MOD = {lista: null, aba: "modelo", arquivos: [], ia: null, slashIdx: 0, slashItens: [], preenchido: null};
+const BR_ISO = (v) => (/^\d{2}\/\d{2}\/\d{4}$/.test(v || "") ? v.split("/").reverse().join("-") : (v || ""));
+const ORIGEM_TXT = {documento: "do documento", automatico: "automático", ia: "pela IA", verificar: "IA: confira", pendente: "preencher"};
+const AUTO_ITEM = {codigo: "IA", titulo: "Preencher a partir de um documento ou do e-mail aberto (automático)", grupo: "Automático", auto: true};
 const ROTULOS = {PROCESSO: "Nº do processo", RECLAMANTE: "Reclamante", RECLAMADA: "Reclamada", DATA: "Data", HORARIO: "Horário",
   MODALIDADE: "Modalidade (presencial, telepresencial, híbrida)", PERIODO: "Saudação (bom dia / boa tarde)", PRAZO_INTERNO: "Prazo interno para envio",
   LINK: "Link", QUANTIDADE_TESTEMUNHAS: "Quantidade de testemunhas", NOME_CLIENTE: "Nome do cliente", TIPO_AUDIENCIA: "Tipo de audiência"};
@@ -615,7 +729,7 @@ function inserirNoEditor(assunto, corpo) {
 function abrirPainel(aba, codigo) {
   MOD.aba = aba || "modelo";
   $("#slash-menu").classList.add("hidden");
-  carregarModelos().then(lista => {
+  return carregarModelos().then(lista => {
     const sel = $("#mp-modelo");
     const grupos = {};
     lista.forEach(m => (grupos[m.grupo || "Outros"] = grupos[m.grupo || "Outros"] || []).push(m));
@@ -627,7 +741,7 @@ function abrirPainel(aba, codigo) {
     trocarAba(MOD.aba);
   }).catch(e => toast(e.message, true));
 }
-function fecharPainel() { $("#modelo-panel").classList.add("hidden"); }
+function fecharPainel() { MOD.preenchido = null; $("#modelo-panel").classList.add("hidden"); }
 function trocarAba(aba) {
   MOD.aba = aba;
   $$("[data-mtab]").forEach(b => b.classList.toggle("on", b.dataset.mtab === aba));
@@ -639,23 +753,42 @@ function trocarAba(aba) {
 
 function renderFormModelo() {
   const pane = $("#mp-modelo-pane"), m = modeloAtual();
-  if (!m) { pane.innerHTML = `<p class="muted">Escolha um modelo acima, ou digite <b>/</b> no texto do e-mail para buscar pelo nome. Para a IA escolher e preencher sozinha, use a aba "Preencher com IA".</p>`; $("#mp-inserir").disabled = true; return; }
-  $("#mp-inserir").disabled = false;
+  const pre = MOD.preenchido && m && MOD.preenchido.codigo === m.codigo ? MOD.preenchido : null;
+  $("#mp-confirma-row").classList.toggle("hidden", !pre);
+  $("#mp-confirmo").checked = false;
+  $("#mp-inserir").textContent = pre ? "Confirmar e inserir" : "Inserir no e-mail";
+  if (!m) { pane.innerHTML = `<p class="muted">Escolha um modelo acima, ou digite <b>/</b> no texto do e-mail para buscar pelo nome. Para escolher e preencher sozinho a partir de um documento, use a aba "Preencher com IA".</p>`; $("#mp-inserir").disabled = true; return; }
+  $("#mp-inserir").disabled = !!pre;  // com dados lidos do documento, só habilita depois que o advogado confere
   const processo = ((compose.refSubject || "").match(/\d{7}-\d{2}\.\d{4}\.\d\.\d{2}\.\d{4}/) || [""])[0];
   const campos = m.campos.map(c => {
-    const id = `mpc-${c}`;
-    if (c === "DATA") return `<label>${rotulo(c)}<input id="${id}" data-campo="${c}" type="date"></label>`;
-    if (c === "PROCESSO") return `<label class="wide">${rotulo(c)}<input id="${id}" data-campo="${c}" value="${esc(processo)}" placeholder="0000000-00.0000.0.00.0000"></label>`;
-    return ehLongo(c) ? `<label class="wide">${rotulo(c)}<textarea id="${id}" data-campo="${c}" rows="3"></textarea></label>`
-      : `<label>${rotulo(c)}<input id="${id}" data-campo="${c}"></label>`;
+    const id = `mpc-${c}`, cv = pre && pre.campos[c];
+    const origem = cv ? (cv.verificar ? "verificar" : cv.valor ? cv.origem : "pendente") : "";
+    const valor = cv ? cv.valor : (c === "PROCESSO" ? processo : "");
+    const tip = cv && cv.trecho ? ` title="No documento: ${esc(cv.trecho)}"` : "";
+    const tag = origem ? `<span class="orig o-${origem}">${ORIGEM_TXT[origem]}</span>` : "";
+    const cls = origem ? `org-${origem}` : "";
+    if (c === "DATA") return `<label>${rotulo(c)} ${tag}<input id="${id}" class="${cls}"${tip} data-campo="${c}" type="date" value="${esc(BR_ISO(valor))}"></label>`;
+    if (c === "PROCESSO") return `<label class="wide">${rotulo(c)} ${tag}<input id="${id}" class="${cls}"${tip} data-campo="${c}" value="${esc(valor)}" placeholder="0000000-00.0000.0.00.0000"></label>`;
+    return ehLongo(c) ? `<label class="wide">${rotulo(c)} ${tag}<textarea id="${id}" class="${cls}"${tip} data-campo="${c}" rows="3">${esc(valor)}</textarea></label>`
+      : `<label>${rotulo(c)} ${tag}<input id="${id}" class="${cls}"${tip} data-campo="${c}" value="${esc(valor)}"></label>`;
   }).join("");
   const blocos = Object.entries(m.blocos).map(([b, bl]) => {
-    const vazio = !bl.texto.trim();
+    const vazio = !bl.texto.trim(), pb = pre && pre.blocos && pre.blocos[b];
+    const incluir = pb ? pb.incluir : (vazio || !bl.condicao);
+    const texto = pb && pb.texto != null ? pb.texto : bl.texto;
     return `<div class="mp-bloco" data-bloco="${b}">
-      <label class="tit"><input type="checkbox" data-incluir ${vazio || !bl.condicao ? "checked" : ""}> <span>${rotulo(b.replace(/^BLOCO_/, ""))}${bl.condicao ? `<div class="cond">${esc(bl.condicao)}</div>` : ""}</span></label>
-      <textarea data-bloco-texto aria-label="Texto do bloco" placeholder="${vazio ? "Escreva este trecho (o modelo não traz texto-base)." : ""}">${esc(bl.texto)}</textarea></div>`;
+      <label class="tit"><input type="checkbox" data-incluir ${incluir ? "checked" : ""}> <span>${rotulo(b.replace(/^BLOCO_/, ""))}${bl.condicao ? `<div class="cond">${esc(bl.condicao)}</div>` : ""}</span></label>
+      <textarea data-bloco-texto aria-label="Texto do bloco" placeholder="${vazio ? "Escreva este trecho (o modelo não traz texto-base)." : ""}">${esc(texto)}</textarea></div>`;
   }).join("");
-  pane.innerHTML = `<div class="mp-campos">${campos || '<span class="muted">Este modelo não tem campos variáveis.</span>'}</div>${blocos}
+  let banner = "";
+  if (pre) {
+    const u = pre.uso || {};
+    const uso = u.ia ? `IA usada em ${u.chamadas} consulta(s), cerca de ${((u.entrada || 0) + (u.saida || 0)).toLocaleString("pt-BR")} tokens.` : "Lido no seu computador, sem usar a IA (0 tokens).";
+    banner = `<div class="mp-confirma"><b>Confira os dados antes de inserir.</b> Modelo ${esc(pre.codigo)} — ${esc(pre.titulo)}${pre.confianca !== "alta" ? " (sugerido: troque acima se não for o certo)" : ""}.
+      <div class="leg"><span class="orig o-documento">do documento</span><span class="orig o-ia">pela IA</span><span class="orig o-verificar">IA: confira</span><span class="orig o-pendente">preencher</span></div>
+      <div class="muted">${uso}${pre.observacoes ? " " + esc(pre.observacoes) : ""}</div></div>`;
+  }
+  pane.innerHTML = `${banner}<div class="mp-campos">${campos || '<span class="muted">Este modelo não tem campos variáveis.</span>'}</div>${blocos}
     ${m.regras ? `<details class="mp-regras"><summary>Orientações do modelo (não vão no e-mail)</summary>${esc(m.regras).replace(/\n/g, "<br>")}</details>` : ""}`;
 }
 function lerFormModelo() {
@@ -677,8 +810,7 @@ function inserirModelo() {
 
 async function renderIA() {
   MOD.ia = await api("/api/ia/status");
-  $("#mp-ia-key").classList.toggle("hidden", MOD.ia.configurada);
-  $("#mp-ia-form").classList.toggle("hidden", !MOD.ia.configurada);
+  $("#mp-ia-key").classList.toggle("hidden", MOD.ia.configurada);  // a chave só é necessária para completar o que faltar
   $("#mp-key-remover").classList.toggle("hidden", MOD.ia.origem !== "arquivo local");
   renderArquivosIA();
 }
@@ -693,21 +825,23 @@ function adicionarArquivosIA(files) {
   }
   renderArquivosIA();
 }
-async function executarIA() {
+async function executarIA(aceitarVisao) {
   const btn = $("#mp-ia-run"), res = $("#mp-ia-result");
   const fd = new FormData();
   fd.append("codigo", $("#mp-modelo").value);
   fd.append("instrucoes", $("#mp-instrucoes").value);
+  if (aceitarVisao === true) fd.append("aceitar_visao", "1");
   if (compose.ref && $("#mp-usar-email").checked) { fd.append("account", compose.account); fd.append("ref_message_id", compose.ref); }
   MOD.arquivos.forEach(f => fd.append("arquivos", f, f.name));
-  btn.disabled = true; $("#mp-status").textContent = "A IA está preenchendo o modelo…";
+  btn.disabled = true; $("#mp-status").textContent = "Lendo o documento…"; res.classList.add("hidden");
   try {
     const r = await api("/api/ia/preencher", {body: fd});
-    inserirNoEditor(r.assunto, r.corpo);
-    const aviso = [r.titulo ? `Modelo usado: ${r.codigo} — ${r.titulo}.` : "", r.pendencias.length ? `A preencher/conferir: ${r.pendencias.join("; ")}.` : "Nenhuma pendência apontada.", r.observacoes].filter(Boolean);
-    fecharPainel();
-    toast(aviso.join(" "));
-    MOD.arquivos = [];
+    if (r.precisa_visao) {
+      if (confirm(`O arquivo ${r.precisa_visao.join(", ")} é imagem ou PDF escaneado (sem texto). Para lê-lo, será enviado à IA, o que gasta mais tokens. Enviar?`)) return await executarIA(true);
+      return;
+    }
+    MOD.preenchido = r; MOD.arquivos = [];
+    await abrirPainel("modelo", r.codigo);   // mostra os dados para o advogado conferir
   } catch (e) { res.classList.remove("hidden"); res.textContent = e.message; }
   finally { btn.disabled = false; $("#mp-status").textContent = ""; }
 }
@@ -720,11 +854,12 @@ function filtrarModelos(q) {
 function mostrarSlash(q) {
   const menu = $("#slash-menu");
   carregarModelos().then(() => {
-    MOD.slashItens = filtrarModelos(q); MOD.slashIdx = 0;
+    const qq = q.trim();
+    MOD.slashItens = (!qq || /^(ia|aut|anex|doc|preen)/i.test(qq) ? [AUTO_ITEM] : []).concat(filtrarModelos(q)); MOD.slashIdx = 0;
     let ultimo = "";
     menu.innerHTML = MOD.slashItens.length ? MOD.slashItens.map((m, i) => {
       const g = m.grupo !== ultimo ? `<div class="grp">${esc(m.grupo)}</div>` : ""; ultimo = m.grupo;
-      return `${g}<div class="it ${i === 0 ? "on" : ""}" role="option" data-i="${i}"><span class="cod">${m.codigo}</span><span>${esc(m.titulo)}</span></div>`;
+      return `${g}<div class="it ${i === 0 ? "on" : ""}" role="option" data-i="${i}"><span class="cod ${m.auto ? "auto" : ""}">${m.codigo}</span><span>${esc(m.titulo)}</span></div>`;
     }).join("") : `<div class="vazio">Nenhum modelo encontrado para "${esc(q)}".</div>`;
     menu.classList.remove("hidden");
     $$(".it", menu).forEach(d => d.onmousedown = (e) => { e.preventDefault(); escolherSlash(+d.dataset.i); });
@@ -733,6 +868,10 @@ function mostrarSlash(q) {
 function escolherSlash(i) {
   const m = MOD.slashItens[i]; if (!m) return;
   limparGatilhoSlash();
+  if (m.auto) {  // com e-mail aberto ou arquivo já anexado, preenche na hora
+    abrirPainel("ia", "").then(() => { if (compose.ref || MOD.arquivos.length) executarIA(); });
+    return;
+  }
   abrirPainel("modelo", m.codigo);
 }
 function limparGatilhoSlash() {
@@ -823,7 +962,7 @@ function openSettings(tab) {
 function selectTab(id) {
   $$(".tab").forEach(t => t.classList.toggle("active", t.dataset.tab === id));
   $$(".tab-pane").forEach(p => p.classList.toggle("hidden", p.id !== id));
-  ({"tab-general": renderGeneral, "tab-accounts": renderAccounts, "tab-signatures": renderSignatures, "tab-rules": renderRules})[id]();
+  ({"tab-general": renderGeneral, "tab-accounts": renderAccounts, "tab-signatures": renderSignatures, "tab-rules": renderRules, "tab-grupos": renderGrupos})[id]();
 }
 function renderGeneral() {
   const v = state.settings.lida_no_gmail_conta_como_lida === "1" ? "1" : "0";
@@ -1014,6 +1153,38 @@ function bind() {
     labelMenu($("#c-label-menu"), currentFrom().account, compose.labels, (add, remove, all) => { compose.labels = all; renderComposeLabels(); }, {applyText: "OK"});
   };
   ["#c-to", "#c-cc", "#c-bcc"].forEach(s => setupAutocomplete($(s)));
+
+  // Grupos de destinatários
+  $("#c-grupos").onclick = guard(async (e) => { e.preventDefault(); e.stopPropagation(); await menuGrupos(); });
+  $("#g-add-empresa").onclick = guard(async () => {
+    await api("/api/grupos", {body: {nome: $("#g-empresa").value, observacao: $("#g-obs").value}});
+    $("#g-empresa").value = ""; $("#g-obs").value = ""; await renderGrupos(); toast("Empresa cadastrada.");
+  });
+  $("#g-lista").onclick = guard(async (e) => {
+    const t = e.target.closest("button"); if (!t) return;
+    if (t.dataset.delEmp) { if (!confirm("Excluir a empresa e todos os seus subgrupos?")) return; await api(`/api/grupos/${t.dataset.delEmp}`, {method: "DELETE"}); await renderGrupos(); }
+    else if (t.dataset.delSg) { if (!confirm("Excluir este subgrupo?")) return; await api(`/api/subgrupos/${t.dataset.delSg}`, {method: "DELETE"}); await renderGrupos(); }
+    else if (t.dataset.editSg) {
+      const sg = JSON.parse(t.dataset.editSg), f = t.closest(".card").querySelector(".g-form");
+      ["nome", "para", "cc", "cco", "id"].forEach(k => { f.querySelector(`[data-f=${k}]`).value = sg[k] || ""; });
+      f.querySelector("[data-f=nome]").focus();
+    } else if (t.dataset.saveSg) {
+      const f = t.closest(".g-form"), v = (k) => f.querySelector(`[data-f=${k}]`).value;
+      await api(`/api/grupos/${t.dataset.saveSg}/subgrupos`, {body: {id: v("id") || null, nome: v("nome"), para: v("para"), cc: v("cc"), cco: v("cco")}});
+      await renderGrupos(); toast("Subgrupo salvo.");
+    }
+  });
+
+  // Confirmação dos dados lidos do documento e arrastar arquivo para a janela de escrita
+  $("#mp-confirmo").onchange = (e) => { $("#mp-inserir").disabled = !e.target.checked; };
+  const comp = $("#compose");
+  ["dragenter", "dragover"].forEach(ev => comp.addEventListener(ev, (e) => { if (e.dataTransfer && [...e.dataTransfer.types].includes("Files")) { e.preventDefault(); comp.classList.add("drop-over"); } }));
+  ["dragleave", "drop"].forEach(ev => comp.addEventListener(ev, () => comp.classList.remove("drop-over")));
+  comp.addEventListener("drop", (e) => {
+    if (!e.dataTransfer || !e.dataTransfer.files.length || e.target.closest("#mp-drop")) return;
+    e.preventDefault(); adicionarArquivosIA(e.dataTransfer.files);
+    abrirPainel("ia", "").then(() => executarIA());
+  });
 
   // Modelos e IA
   $("#c-modelos").onclick = (e) => { e.stopPropagation(); abrirPainel("modelo", ""); };

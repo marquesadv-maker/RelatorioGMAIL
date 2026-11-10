@@ -80,7 +80,9 @@
   <div class="compose-body">
     <div class="field"><label for="c-from">De</label><select id="c-from"></select></div>
     <div class="field ac-wrap"><label for="c-to">Para</label><input id="c-to" autocomplete="off">
-      <button class="link-btn" id="c-show-cc" type="button">Cc Cco</button><div class="ac hidden"></div></div>
+      <button class="link-btn" id="c-grupos" type="button" title="Inserir e-mails padrão de uma empresa/subgrupo">Grupos</button>
+      <button class="link-btn" id="c-show-cc" type="button">Cc Cco</button><div class="ac hidden"></div>
+      <div class="menu grupos-menu hidden" id="c-grupos-menu"></div></div>
     <div class="field ac-wrap hidden" id="c-cc-row"><label for="c-cc">Cc</label><input id="c-cc" autocomplete="off"><div class="ac hidden"></div></div>
     <div class="field ac-wrap hidden" id="c-bcc-row"><label for="c-bcc">Cco</label><input id="c-bcc" autocomplete="off"><div class="ac hidden"></div></div>
     <div class="field"><input id="c-subject" placeholder="Assunto" aria-label="Assunto"></div>
@@ -113,9 +115,9 @@
       <label class="mp-row"><span>Modelo</span><select id="mp-modelo"></select></label>
       <div id="mp-modelo-pane"></div>
       <div id="mp-ia-pane" class="hidden">
-        <p class="muted mp-aviso"><span class="ms sm">lock</span> Ao usar a IA, o texto e os arquivos enviados são processados pela API da Anthropic. Envie apenas o necessário para o preenchimento (LGPD) e confira o resultado antes de enviar.</p>
+        <p class="muted mp-aviso"><span class="ms sm">bolt</span> O sistema lê o documento no seu computador e preenche o que conseguir sem usar a IA. A IA (API da Anthropic) só é consultada para o que faltar, com o mínimo de texto (LGPD). Você confere os dados antes de inserir.</p>
         <div id="mp-ia-key" class="hidden">
-          <p>Para usar a IA, informe a chave da API da Anthropic. Ela fica salva somente neste computador.</p>
+          <p class="muted">Opcional: a chave da API só é usada para completar o que a leitura local não achar. Fica salva somente neste computador.</p>
           <div class="row"><input id="mp-key" type="password" placeholder="Chave da API (sk-ant-...)" autocomplete="off"><button class="btn primary" id="mp-key-save">Salvar chave</button></div>
         </div>
         <div id="mp-ia-form">
@@ -130,6 +132,7 @@
       </div>
     </div>
     <div class="mp-foot"><span class="hint" id="mp-status"></span><span class="spacer"></span>
+      <label class="mp-confirma-row hidden" id="mp-confirma-row"><input type="checkbox" id="mp-confirmo"> Conferi os dados e eles estão corretos</label>
       <button class="btn" id="mp-cancelar">Cancelar</button><button class="btn primary" id="mp-inserir">Inserir no e-mail</button></div>
   </div>
   <div class="compose-foot">
@@ -157,6 +160,7 @@
       <button class="tab active" data-tab="tab-general">Geral</button>
       <button class="tab" data-tab="tab-accounts">Contas</button>
       <button class="tab" data-tab="tab-signatures">Remetentes e assinaturas</button>
+      <button class="tab" data-tab="tab-grupos">Grupos de destinatários</button>
       <button class="tab" data-tab="tab-rules">Filtros</button>
     </div>
     <div class="modal-body">
@@ -186,6 +190,11 @@
         <p class="muted">Lidos do Gmail (Configurações → Geral → Assinatura e "Enviar e-mail como"). O nome do remetente é preenchido automaticamente ao escrever.</p>
         <button class="btn" id="sig-refresh">Atualizar do Gmail</button>
         <div id="sig-list"></div>
+      </section>
+      <section id="tab-grupos" class="tab-pane hidden">
+        <p class="muted">Cadastre empresas e, dentro de cada uma, subgrupos (RH, Jurídico, Diretoria…) com os e-mails padrão. Ao escrever, use o botão <b>Grupos</b> do campo Para, ou digite o nome da empresa, para preencher Para, Cc e Cco de uma vez.</p>
+        <div class="row"><input id="g-empresa" placeholder="Nome da empresa/grupo"><input id="g-obs" placeholder="Observação (opcional)"><button class="btn primary" id="g-add-empresa">Adicionar empresa</button></div>
+        <div id="g-lista"></div>
       </section>
       <section id="tab-rules" class="tab-pane hidden">
         <p class="muted">Aplica marcadores automaticamente no Gmail. Os filtros apenas <b>adicionam</b> marcadores: nunca marcam como lida nem retiram da caixa de entrada.</p>

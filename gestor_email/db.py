@@ -112,6 +112,31 @@ CREATE TABLE IF NOT EXISTS triagem_manual (
     PRIMARY KEY (account, thread_id)
 );
 
+CREATE TABLE IF NOT EXISTS grupos_empresas (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    nome       TEXT NOT NULL UNIQUE COLLATE NOCASE,
+    observacao TEXT NOT NULL DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS subgrupos (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    empresa_id INTEGER NOT NULL REFERENCES grupos_empresas(id) ON DELETE CASCADE,
+    nome       TEXT NOT NULL COLLATE NOCASE,
+    para       TEXT NOT NULL DEFAULT '',
+    cc         TEXT NOT NULL DEFAULT '',
+    cco        TEXT NOT NULL DEFAULT '',
+    UNIQUE (empresa_id, nome)
+);
+
+-- E-mails enviados pela ferramenta a partir de uma conversa (resposta, encaminhamento ou modelo)
+CREATE TABLE IF NOT EXISTS envios (
+    account    TEXT NOT NULL,
+    thread_id  TEXT NOT NULL,
+    message_id TEXT NOT NULL,
+    criado     TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+    PRIMARY KEY (account, thread_id, message_id)
+);
+
 CREATE TABLE IF NOT EXISTS settings (
     key   TEXT PRIMARY KEY,
     value TEXT

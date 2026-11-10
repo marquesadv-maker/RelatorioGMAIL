@@ -359,3 +359,43 @@ table.rules th{color:var(--text2);font-weight:500}
 .spam-banner .ms{color:#c26a00;flex-shrink:0}
 .spam-banner .btn{margin-left:auto;flex-shrink:0;height:32px;padding:0 14px;color:#5d3a00;border-color:#d9a050;background:transparent}
 @media (max-width:760px){.spam-banner{margin-left:16px;margin-right:16px;flex-wrap:wrap}}
+
+/* Período dos Destaques, grupos e confirmação da IA */
+.tabs-inbox .periodo{margin-left:auto}
+.periodo .menu{right:0;left:auto;min-width:280px}
+.per-custom{display:flex;gap:8px;align-items:center;padding:2px 16px 8px 40px}
+.per-custom input{border:1px solid #747775;border-radius:4px;padding:5px 6px}
+.menu .mi{display:flex;align-items:center;gap:10px;padding:7px 16px 7px 24px;cursor:pointer}
+.menu .mi:hover{background:#f1f3f4}
+.menu .mi small{margin-left:auto;color:var(--muted)}
+.menu .mi.off{color:var(--muted);cursor:default}
+.grupos-menu{left:auto;right:60px;top:36px}
+.g-head{display:flex;align-items:center;gap:6px;margin-bottom:6px}
+.g-form{display:grid;grid-template-columns:1.2fr 2fr 1.4fr 1fr auto;gap:8px;margin-top:10px}
+.g-form input{padding:7px 9px;border:1px solid #747775;border-radius:4px;min-width:0}
+@media (max-width:900px){.g-form{grid-template-columns:1fr 1fr}}
+.slash-menu .cod.auto{background:#e6f4ea;color:#188038}
+.compose.drop-over{outline:3px dashed var(--blue);outline-offset:-6px}
+.mp-confirma{background:#e8f0fe;border-radius:8px;padding:10px 12px;margin-bottom:12px;font-size:13px}
+.mp-confirma .leg{display:flex;gap:6px;flex-wrap:wrap;margin:6px 0}
+.mp-confirma-row{display:flex;align-items:center;gap:6px;font-size:13px;font-weight:500;color:var(--text2)}
+.orig{display:inline-block;font-size:10px;font-weight:500;border-radius:8px;padding:0 6px;margin-left:4px;line-height:16px}
+.o-documento{background:#e6f4ea;color:#137333}
+.o-automatico{background:#e8eaed;color:#3c4043}
+.o-ia{background:#e8f0fe;color:#1a56c4}
+.o-verificar{background:#ffe9c7;color:#8a4b00}
+.o-pendente{background:#fff3b0;color:#5f4300}
+.mp-campos input.org-documento,.mp-campos textarea.org-documento{border-color:#81c995}
+.mp-campos input.org-ia{border-color:#8ab4f8}
+.mp-campos input.org-verificar{border-color:#f0b35c;background:#fffaf0}
+.mp-campos input.org-pendente,.mp-campos textarea.org-pendente{border-color:#f2c94c;background:#fffde6}
+
+/* Alerta discreto: notificação sem e-mail enviado */
+.alerta-envio{display:inline-flex;align-items:center;color:#c26a00;opacity:.8;flex-shrink:0;cursor:help}
+.alerta-envio .ms{font-size:16px;width:16px}
+.envio-aviso{display:flex;align-items:center;gap:8px;margin:0 24px 4px 72px;font-size:13px;color:#8a4b00}
+.envio-aviso .ms{color:#c26a00}
+.envio-aviso .link-btn{color:var(--blue);font-weight:500}
+@media (max-width:760px){.envio-aviso{margin-left:16px}}
+.tabs-inbox{overflow:visible;flex-wrap:wrap}
+.mp-campos label .orig{align-self:flex-start;margin:2px 0}

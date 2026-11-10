@@ -396,6 +396,49 @@ class GestorTest(unittest.TestCase):
         sync.sync_account(ME)
         self.assertIn("Oferta", self._assuntos("/api/threads?label=INBOX"))
 
+    def test_grupos_de_empresas_e_subgrupos(self):
+        e = self.post("/api/grupos", json={"nome": "Empresa Exemplo Ltda", "observacao": "Cliente desde 2020"})
+        r = self.client.post("/api/grupos", headers=self.h, json={"nome": "empresa exemplo ltda"})
+        self.assertEqual(r.status_code, 400)  # nome duplicado (sem diferenciar maiúsculas)
+        self.post(f"/api/grupos/{e['id']}/subgrupos", json={
+            "nome": "RH", "para": "Rh@Exemplo.com; gerente.rh@exemplo.com", "cc": "diretoria@exemplo.com", "cco": ""})
+        self.post(f"/api/grupos/{e['id']}/subgrupos", json={"nome": "Jurídico", "para": "juridico@exemplo.com"})
+        ruim = self.client.post(f"/api/grupos/{e['id']}/subgrupos", headers=self.h, json={"nome": "X", "para": "sem-arroba"})
+        self.assertEqual(ruim.status_code, 400)
+        vazio = self.client.post(f"/api/grupos/{e['id']}/subgrupos", headers=self.h, json={"nome": "Y"})
+        self.assertEqual(vazio.status_code, 400)
+        g = self.get("/api/grupos")
+        self.assertEqual(len(g), 1)
+        rh = next(s for s in g[0]["subgrupos"] if s["nome"] == "RH")
+        self.assertEqual(rh["para"], "rh@exemplo.com, gerente.rh@exemplo.com")
+        # Aparece nas sugestões de destinatário ao digitar o nome
+        sug = self.get("/api/contacts?q=exemplo")
+        self.assertTrue(any(c.get("grupo") and c["name"] == "Empresa Exemplo Ltda › RH" for c in sug))
+        self.assertEqual(next(c for c in sug if c.get("grupo") and "RH" in c["name"])["cc"], "diretoria@exemplo.com")
+        # Excluir a empresa remove os subgrupos
+        self.client.delete(f"/api/grupos/{e['id']}", headers=self.h)
+        self.assertEqual(self.get("/api/grupos"), [])
+
+    def test_alerta_notificacao_sem_email_enviado(self):
+        a = self.g.add_message("PJe <pje@trt2.jus.br>", "Intimação - Processo 0001234-56.2026.5.02.0001")
+        b = self.g.add_message("PJe <pje@trt2.jus.br>", "Citação eletrônica - Processo 0009999-11.2026.5.02.0002")
+        c = self.g.add_message("PJe <pje@trt2.jus.br>", "Publicação DJE referente ao processo 0007777-22.2026.5.02.0003")
+        self.g.add_message("Cliente <cliente@ex.com>", "Conversa comum")
+        sync.sync_account(ME)
+        por = lambda: {t["subject"].split(" ")[0]: t["sem_envio"] for t in self.get("/api/threads?label=INBOX")}
+        self.assertEqual(por(), {"Intimação": True, "Citação": True, "Publicação": True, "Conversa": False})
+        # 1) Enviado pelo Gmail depois, com o mesmo assunto ("Enc: ...") -> não alerta
+        self.g.add_message(f"Dr. <{ME}>", "Enc: Intimação - Processo 0001234-56.2026.5.02.0001", labels=("SENT",), to="cli@x.com")
+        # 2) Enviado pelo Gmail citando só o número do processo -> não alerta
+        self.g.add_message(f"Dr. <{ME}>", "Aviso ao cliente", "Processo 0007777-22.2026.5.02.0003 publicado", labels=("SENT",), to="cli@x.com")
+        sync.sync_account(ME)
+        self.assertEqual(por(), {"Intimação": False, "Citação": True, "Publicação": False, "Conversa": False})
+        # 3) Enviado pela ferramenta a partir da notificação (encaminhamento = outra conversa) -> não alerta
+        self.post("/api/send", data={"account": ME, "to": "cli@x.com", "subject": "Assunto livre", "html": "oi",
+                                     "mode": "encaminhar", "ref_message_id": b})
+        self.assertEqual(por()["Citação"], False)
+        self.assertFalse(self.get(f"/api/threads/{ME}/{self.g.msg_store[b]['threadId']}")["sem_envio"])
+
     def test_anexo_svg_nunca_inline(self):
         mid = self.g.add_message("X <x@ex.com>", "Img")
         r = self.client.get(f"/api/attachment/{ME}/{mid}/a1?inline=1&tipo=image/svg%2Bxml&nome=a.svg", headers=self.h)
