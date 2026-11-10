@@ -1046,7 +1046,7 @@ function renderIntegridade() {
   const btn = $("#btn-integ");
   btn.className = `pill-count integ ${nivel}`;
   btn.querySelector(".ms").textContent = off ? "cloud_off" : info.icon;
-  $("#integ-lbl").textContent = off ? "Sem comunicação" : info.lbl;
+  $("#integ-lbl").textContent = off ? "Sem comunicação" : (i && i.acao === "devolucoes" ? "E-mail devolvido" : info.lbl);
   btn.title = off ? "Sem comunicação com o MarquesPro" : `${info.lbl}. Clique para ver a conferência com o Gmail.`;
   const ban = $("#integ-banner");
   if (off) {
@@ -1056,9 +1056,10 @@ function renderIntegridade() {
     return;
   }
   if (!i || i.nivel === "ok") { ban.className = "integ-banner hidden"; ban.innerHTML = ""; return; }
-  const acoes = {reconectar: `<button class="btn primary" data-ia="reconectar">Reconectar conta</button>`, verificar: `<button class="btn" data-ia="verificar">Verificar agora</button>`, reconhecer: `<button class="btn" data-ia="reconhecer">Entendi</button>`};
+  const acoes = {devolucoes: `<button class="btn" data-ia="devolucoes">Ver e-mails devolvidos</button>`, reconectar: `<button class="btn primary" data-ia="reconectar">Reconectar conta</button>`, verificar: `<button class="btn" data-ia="verificar">Verificar agora</button>`, reconhecer: `<button class="btn" data-ia="reconhecer">Entendi</button>`};
   ban.className = `integ-banner ${i.nivel}`;
-  ban.innerHTML = `${ic(info.icon)}<div><b>${esc(info.lbl)}.</b> ${esc(i.mensagem)}${i.conta ? ` <span class="muted">(${esc(i.conta)})</span>` : ""}</div>
+  const titulo = i.acao === "devolucoes" ? "E-mail devolvido sem entrega" : info.lbl;
+  ban.innerHTML = `${ic(info.icon)}<div><b>${esc(titulo)}.</b> ${esc(i.mensagem)}${i.conta ? ` <span class="muted">(${esc(i.conta)})</span>` : ""}</div>
     <button class="btn" data-ia="detalhes">Detalhes</button>${acoes[i.acao] || ""}`;
   $$("[data-ia]", ban).forEach(b => b.onclick = guard(() => acaoIntegridade(b.dataset.ia)));
   if (i.nivel === "erro" && state.integAvisado !== i.mensagem) {
@@ -1069,7 +1070,7 @@ function renderIntegridade() {
 }
 async function acaoIntegridade(a) {
   if (a === "reconectar") { openSettings("tab-accounts"); return; }
-  if (a === "detalhes") { await abrirIntegridade(); return; }
+  if (a === "detalhes" || a === "devolucoes") { await abrirIntegridade(a === "devolucoes"); return; }
   if (a === "reconhecer") { await api("/api/integridade/reconhecer", {method: "POST"}); await refreshStatus(); await abrirIntegridade(true); return; }
   if (a === "verificar") {
     toast("Conferindo tudo o que está no Gmail…");
@@ -1095,11 +1096,15 @@ async function abrirIntegridade(manter) {
       <div class="kv"><span>Aqui no MarquesPro</span><b>${c.aqui_n ?? "—"}</b></div>
       <div class="kv"><span>Recuperados pela conferência (total)</span><b>${c.recuperados_total}</b></div>
       ${c.erro ? `<div class="integ-erro">${esc(c.erro)}</div>` : ""}</div>`).join("") || `<p class="muted">Nenhuma conta conectada.</p>`}
+    ${(d.lista_devolucoes || []).length ? `<h4>E-mails devolvidos sem entrega</h4>` + d.lista_devolucoes.map(v => `<div class="integ-dev"><div><b>${v.destinatario ? esc(v.destinatario) : "Destinatário não identificado"}</b> <span class="muted">${quando(new Date(v.quando).toISOString().replace("T", " ").slice(0, 19))}</span></div>
+      <div class="muted">${esc(v.motivo)}</div><div class="row"><button class="btn" data-dev-abrir="${esc(v.account)}|${esc(v.thread_id)}">Abrir</button><button class="btn" data-dev-ok="${esc(v.account)}|${esc(v.message_id)}">Já conferi</button></div></div>`).join("") : ""}
     <div class="row"><button class="btn primary" data-ia="verificar">Verificar agora</button>${d.contas.some(c => c.acao === "reconhecer") ? `<button class="btn" data-ia="reconhecer">Entendi</button>` : ""}${d.contas.some(c => c.acao === "reconectar") ? `<button class="btn" data-ia="reconectar">Reconectar conta</button>` : ""}</div>
     <h4>Histórico</h4>
     ${d.eventos.length ? d.eventos.slice(0, 12).map(e => `<div class="ev ${e.nivel}"><span class="muted">${quando(e.ts)}</span> ${esc(e.detalhe || e.evento)}</div>`).join("") : `<p class="muted">Sem ocorrências registradas.</p>`}`;
   pop.classList.remove("hidden");
   $$("[data-ia]", pop).forEach(b => b.onclick = guard(() => acaoIntegridade(b.dataset.ia)));
+  $$("[data-dev-ok]", pop).forEach(b => b.onclick = guard(async () => { const [ac, id] = b.dataset.devOk.split("|"); await api(`/api/devolucoes/${encodeURIComponent(ac)}/${id}/ok`, {method: "POST"}); await refreshStatus(); await abrirIntegridade(true); }));
+  $$("[data-dev-abrir]", pop).forEach(b => b.onclick = guard(async () => { const [ac, tid] = b.dataset.devAbrir.split("|"); pop.classList.add("hidden"); await openThread(ac, tid); }));
 }
 
 function renderCounterPop() {

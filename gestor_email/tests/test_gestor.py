@@ -648,6 +648,21 @@ class GestorTest(unittest.TestCase):
         self.assertEqual(self.get("/api/settings")["etiquetas_lista"], "Equipe")
         self.assertEqual(self.post("/api/settings", json={"etiquetas_lista": "Equipe, Responsável"})["etiquetas_lista"], "Equipe, Responsável")
 
+    def test_email_devolvido_sem_entrega_e_sinalizado(self):
+        self.g.add_message("Cliente <c@ex.com>", "Oi")
+        self.g.add_message("Mail Delivery Subsystem <mailer-daemon@googlemail.com>", "Delivery Status Notification (Failure)",
+                           "Not delivered to errado@clientex.com.br")
+        sync.sync_account(ME)
+        from gestor_email import integridade
+        integridade.verificar(ME, 2)
+        est = self.get("/api/integridade")
+        self.assertEqual((est["nivel"], est["acao"], est["devolucoes"]), ("atencao", "devolucoes", 1))
+        d = est["lista_devolucoes"][0]
+        self.assertEqual(d["destinatario"], "errado@clientex.com.br")
+        self.assertEqual(self.get("/api/status")["integridade"]["devolucoes"], 1)
+        self.post(f"/api/devolucoes/{ME}/{d['message_id']}/ok")
+        self.assertEqual(self.get("/api/integridade")["nivel"], "ok")
+
     def test_prazo_interno_pela_regra_configurada(self):
         n = self._cnj()
         texto = f"Audiência una presencial dia 15/12/2026 às 9h30, processo {n}. Reclamante: Fulano de Tal Reclamada: Empresa Exemplo Ltda."

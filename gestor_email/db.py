@@ -175,6 +175,14 @@ CREATE TABLE IF NOT EXISTS sync_log (
     detalhe TEXT
 );
 
+-- Avisos de "e-mail devolvido" (falha de entrega) que o usuário já conferiu
+CREATE TABLE IF NOT EXISTS devolucoes_ok (
+    account    TEXT NOT NULL,
+    message_id TEXT NOT NULL,
+    criado     TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+    PRIMARY KEY (account, message_id)
+);
+
 CREATE TABLE IF NOT EXISTS settings (
     key   TEXT PRIMARY KEY,
     value TEXT

@@ -156,6 +156,43 @@ def reconhecer():
     db.set_setting("integridade_ack", _agora())
 
 
+# ─── E-mails devolvidos (falha de entrega) ────────────────────────────────────────
+
+_DEVOLVIDO_REMETENTE = re.compile(r"mailer-daemon|postmaster|mail delivery subsystem", re.I)
+_DEVOLVIDO_ASSUNTO = re.compile(
+    r"delivery status notification|undelivered mail|mail delivery failed|returned mail|failure notice|delivery has failed|"
+    r"message not delivered|falha na entrega|n[ãa]o foi poss[ií]vel entregar|n[ãa]o foi entregue|mensagem n[ãa]o entregue|"
+    r"entrega.{0,20}falh|endere[çc]o n[ãa]o encontrado", re.I)
+_EMAIL = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
+JANELA_DEVOLUCAO_DIAS = 14
+
+
+def devolucoes(account: Optional[str] = None) -> List[Dict[str, Any]]:
+    """E-mails enviados que voltaram sem entrega (mensagens automáticas do servidor de e-mail), ainda não conferidos."""
+    import json as _json
+    desde = int((time.time() - JANELA_DEVOLUCAO_DIAS * 86400) * 1000)
+    proprios = {x["email"].lower() for x in db.rows("SELECT email FROM accounts")} | {x["email"].lower() for x in db.rows("SELECT email FROM send_as")}
+    sql = ("SELECT m.account, m.id, m.thread_id, m.internal_date, m.from_raw, m.from_email, m.subject, m.snippet, m.label_ids FROM messages m "
+           "WHERE m.internal_date>=? AND NOT EXISTS (SELECT 1 FROM devolucoes_ok o WHERE o.account=m.account AND o.message_id=m.id)"
+           + (" AND m.account=?" if account else "") + " ORDER BY m.internal_date DESC")
+    out: List[Dict[str, Any]] = []
+    for m in db.rows(sql, [desde] + ([account] if account else [])):
+        if "SENT" in _json.loads(m["label_ids"]):
+            continue
+        if not (_DEVOLVIDO_REMETENTE.search(m["from_raw"] or "") or _DEVOLVIDO_ASSUNTO.search(m["subject"] or "")):
+            continue
+        if not _DEVOLVIDO_REMETENTE.search(m["from_raw"] or "") and not _DEVOLVIDO_ASSUNTO.search(m["subject"] or ""):
+            continue
+        dest = next((e for e in _EMAIL.findall(m["snippet"] or "") if e.lower() not in proprios and not _DEVOLVIDO_REMETENTE.search(e)), "")
+        out.append({"account": m["account"], "message_id": m["id"], "thread_id": m["thread_id"], "quando": m["internal_date"],
+                    "assunto": m["subject"], "destinatario": dest, "motivo": re.sub(r"\s+", " ", m["snippet"] or "")[:200]})
+    return out
+
+
+def dispensar_devolucao(account: str, message_id: str):
+    db.execute("INSERT OR IGNORE INTO devolucoes_ok (account, message_id) VALUES (?,?)", (account, message_id))
+
+
 # ─── Estado exibido na tela (só dados locais) ─────────────────────────────────────
 
 _ORDEM = {"ok": 0, "atencao": 1, "erro": 2}
@@ -206,7 +243,11 @@ def estado() -> Dict[str, Any]:
         pior = max(contas, key=lambda c: _ORDEM[c["nivel"]])
         geral = {"nivel": pior["nivel"], "mensagem": pior["mensagem"] if pior["nivel"] != "ok" else contas[0]["mensagem"],
                  "acao": pior["acao"], "conta": pior["email"] if pior["nivel"] != "ok" else None}
-    return dict(geral, contas=contas)
+    n_dev = len(devolucoes())
+    if n_dev and geral["nivel"] == "ok":
+        geral = {"nivel": "atencao", "acao": "devolucoes", "conta": None,
+                 "mensagem": f"{n_dev} e-mail(s) enviado(s) pelo escritório voltaram sem ser entregues. Confira o destinatário."}
+    return dict(geral, contas=contas, devolucoes=n_dev)
 
 
 def eventos(limite: int = 40) -> List[Dict[str, Any]]:

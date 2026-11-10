@@ -110,7 +110,13 @@ def create_app() -> Flask:
 
     @app.get("/api/integridade")
     def integridade_get():
-        return jsonify(dict(integridade.estado(), eventos=integridade.eventos(), intervalo_s=config.SYNC_INTERVAL_SECONDS))
+        return jsonify(dict(integridade.estado(), eventos=integridade.eventos(), intervalo_s=config.SYNC_INTERVAL_SECONDS,
+                            lista_devolucoes=integridade.devolucoes()))
+
+    @app.post("/api/devolucoes/<account>/<message_id>/ok")
+    def devolucao_ok(account, message_id):
+        integridade.dispensar_devolucao(_require_account(account), message_id)
+        return jsonify(integridade.estado())
 
     @app.post("/api/integridade/verificar")
     def integridade_verificar():

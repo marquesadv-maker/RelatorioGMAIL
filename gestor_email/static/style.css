@@ -604,3 +604,6 @@ mark.kw{background:none;color:inherit;font-weight:inherit;box-shadow:none;paddin
 .pend-banner .ms{color:#5f6368}
 .pend-banner .link-btn{color:#0b57d0;text-decoration:none}
 .envio-aviso{color:#5f6368}.envio-aviso .ms{color:#b06000}
+
+.integ-dev{border:1px solid var(--line);border-radius:8px;padding:8px 10px;margin:6px 0;font-size:13px}
+.integ-dev .row{margin-top:6px;display:flex;gap:6px}
