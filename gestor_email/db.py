@@ -376,6 +376,8 @@ DEFAULT_SETTINGS = {
     # Palavras que ganham ênfase na lista (assunto e trecho), separadas por vírgula
     # Última vez em que o usuário confirmou ter visto e-mails recuperados pela verificação cruzada
     "integridade_ack": "",
+    # Etiquetas exibidas na lista de e-mails: só as dos responsáveis (início do nome, separado por vírgula; vazio = todas)
+    "etiquetas_lista": "Equipe",
     "palavras_destaque": "intimação, notificação, citação, urgente, prazo, audiência, sentença, mandado, penhora, bloqueio",
 }
 

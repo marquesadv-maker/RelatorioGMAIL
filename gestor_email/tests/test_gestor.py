@@ -641,6 +641,12 @@ class GestorTest(unittest.TestCase):
         self.assertEqual(r[-1]["subject"], "Bom dia")           # sem prioridade, por último
         self.assertEqual(len([t for t in r if t["prioridade"]]), 5)   # anúncio não conta
         self.assertNotIn("Intimação com desconto", [t["subject"] for t in r[:5]])
+        # a aba "judiciais" reúne os judiciais e as prioridades (DJE, domicílio, MPT, contrato, parecer)
+        aba = {t["subject"] for t in self.get("/api/threads?label=INBOX&grupo=judiciais")}
+        self.assertEqual(aba, {"Pedido", "Parecer", "Notificação - Domicílio Judicial Eletrônico", "Notificação ao Ministério Público do Trabalho", "Publicação no DJE"})
+        self.assertEqual(self.get("/api/status")["notificacoes"]["pendentes_por_grupo"]["judiciais"], 5)
+        self.assertEqual(self.get("/api/settings")["etiquetas_lista"], "Equipe")
+        self.assertEqual(self.post("/api/settings", json={"etiquetas_lista": "Equipe, Responsável"})["etiquetas_lista"], "Equipe, Responsável")
 
     def test_prazo_interno_pela_regra_configurada(self):
         n = self._cnj()

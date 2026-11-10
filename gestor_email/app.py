@@ -747,7 +747,7 @@ def create_app() -> Flask:
                     if txt and not (txt.isdigit() and 1 <= int(txt) <= 60):
                         return jsonify({"erro": "Informe um número de dias úteis entre 1 e 60 (ou deixe vazio)."}), 400
                     db.set_setting(k, txt)
-                elif k == "palavras_destaque":
+                elif k in ("palavras_destaque", "etiquetas_lista"):
                     db.set_setting(k, re.sub(r"\s+", " ", str(v or "")).strip()[:500])
                 else:
                     db.set_setting(k, "1" if v in (True, "1", 1) else "0")
@@ -820,7 +820,8 @@ def _require_account(acc) -> str:
 
 # Destaques: intimações, citações e demais notificações judiciais
 GRUPOS_NOTIF = {
-    "judiciais": "m.tipo='TRIBUNAL'",
+    # Judiciais + prioridades de leitura (DJE, domicílio judicial, MPT, intimação, contrato, parecer)
+    "judiciais": "(m.tipo='TRIBUNAL' OR (m.prio IS NOT NULL AND m.bulk=0 AND COALESCE(m.triagem,'')<>'anuncio'))",
     "intimacoes": "m.tipo='TRIBUNAL' AND m.subtipo='Intimação'",
     "citacoes": "m.tipo='TRIBUNAL' AND m.subtipo='Citação'",
     "notificacoes": "m.tipo='TRIBUNAL' AND COALESCE(m.subtipo,'') NOT IN ('Intimação','Citação')",

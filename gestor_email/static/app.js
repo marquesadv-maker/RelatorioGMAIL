@@ -211,7 +211,7 @@ function renderTabs() {
   const judic = pg.judiciais || 0, nn = st.novos_hoje || 0, pn = st.pendencias ? st.pendencias.abertas + st.pendencias.em_execucao : 0;
   const naCaixa = state.folder.id === "INBOX";
   const ativa = state.folder.id === "PEND" ? "pend" : naCaixa && state.grupo === "judiciais" ? "judiciais" : naCaixa && state.novos ? "novos" : "todas";
-  const detalhe = `Não abertas no MarquesPro: intimações ${pg.intimacoes || 0} · citações ${pg.citacoes || 0} · notificações ${pg.notificacoes || 0}`;
+  const detalhe = `Inclui DJE, Domicílio Judicial, MPT, intimações, solicitações de contrato e de parecer. Não abertas no MarquesPro: intimações ${pg.intimacoes || 0} · citações ${pg.citacoes || 0} · notificações ${pg.notificacoes || 0}`;
   const tab = (id, icone, nome, n, tip, cls = "") => `<button class="gtab ${ativa === id ? "on" : ""}" data-q="${id}" title="${esc(tip)}">${ic(icone, ativa === id ? "fill" : "")}<span>${nome}</span>${n ? `<span class="gn ${cls}">${n}</span>` : ""}</button>`;
   box.innerHTML = `<div class="gtabs">
     ${tab("todas", "inbox", "Principal", 0, "Toda a caixa de entrada")}
@@ -362,26 +362,17 @@ function pendCard(p, k) {
 
 function rowHtml(t, i, multi) {
   {
-    const chips = t.label_ids.map(id => labelById(t.account, id)).filter(l => l && l.type === "user")
+    // Na lista só aparece a etiqueta dos responsáveis (prefixos definidos em Configurações; vazio = todas as etiquetas)
+    const pref = (state.settings.etiquetas_lista || "").split(/[,;]+/).map(x => x.trim().toLowerCase()).filter(Boolean);
+    const dosResp = (l) => !pref.length || pref.some(p => l.name.toLowerCase() === p || l.name.toLowerCase().startsWith(p + "/"));
+    const chips = t.label_ids.map(id => labelById(t.account, id)).filter(l => l && l.type === "user" && dosResp(l))
       .filter(l => !(state.folder.name && l.name === state.folder.name));
     const chipsHtml = chips.slice(0, 2).map(l => chipHtml(l, false, false)).join("") +
       (chips.length > 2 ? `<span class="chip mais-n" title="${esc(chips.slice(2).map(l => l.name).join(", "))}">+${chips.length - 2}</span>` : "");
     const atts = (t.anexos || []).map(n => `<span class="att-chip">${ic("description", "sm")}${esc(n)}</span>`).join("");
     const starred = t.label_ids.includes("STARRED");
-    const prio = t.prioridade || [];
-    const hl = false;
     const pal = t.palavras || [];
-    const pend = t.pendencia;
-    // Etiquetas do sistema no mesmo formato das do Gmail: vermelha só para prioridade de leitura, cinza para o resto
-    const lb = (cls, texto, titulo) => `<span class="chip ${cls}" title="${esc(titulo)}">${esc(texto)}</span>`;
-    const prioChips = prio.slice(0, 2).map(p => lb("g-prio", p, `Prioridade de leitura: ${p}`)).join("");
-    const sys = [];
-    if (pend) sys.push(lb("g-sys", pend.status === "em_execucao" ? "Em execução" : `Sem resposta${pend.dias >= 1 ? ` · ${pend.dias}d` : ""}`,
-      `${pend.status === "em_execucao" ? "Tratativa em execução" : "Cliente perguntou e ainda não foi respondido"}: ${pend.trecho}`));
-    if (t.resgatado) sys.push(lb("g-sys", "Veio do spam", `Estava no spam do Gmail (${t.resgatado === "cliente" ? "remetente conhecido" : "parece notificação judicial"}). Confira o remetente.`));
-    if (t.notificacao && !prio.length && !sys.length) sys.push(lb("g-sys", t.notificacao, "Notificação judicial"));
-    const sysChips = sys.slice(0, 2).join("");
-    const novoChip = "", pendChip = "", spamChip = "", notifChip = "";
+    const hl = false;
     return `<div class="row-t ${t.read_local ? "" : "unread"} ${hl ? "hl" : ""}  ${state.selected.has(i) ? "selected" : ""}" data-i="${i}">
       <div class="lead">
         <span class="cell"><input type="checkbox" class="sel" ${state.selected.has(i) ? "checked" : ""} aria-label="Selecionar"></span>
@@ -390,7 +381,7 @@ function rowHtml(t, i, multi) {
       </div>
       <div class="from">${esc(t.senders)}${t.count > 1 ? `<span class="cnt">${t.count}</span>` : ""}</div>
       <div class="mid">
-        <div class="line1">${prioChips}${sysChips}${chipsHtml}${t.sem_envio ? `<span class="alerta-envio" title="Nenhum e-mail enviado sobre esta notificação">${ic("error", "sm")}</span>` : ""}
+        <div class="line1">${chipsHtml}${t.sem_envio ? `<span class="alerta-envio" title="Nenhum e-mail enviado sobre esta notificação">${ic("error", "sm")}</span>` : ""}
           <span class="subj"><span class="subj-t">${realce(t.subject, pal)}</span><span class="snip"> - ${realce(t.snippet, pal)}</span></span></div>
         ${atts ? `<div class="att-chips">${atts}</div>` : ""}
       </div>
@@ -1158,6 +1149,7 @@ function renderGeneral() {
   $("#ia-ler-imagens").checked = state.settings.ia_ler_imagens_auto !== "0";
   $("#prazo-interno-dias").value = state.settings.prazo_interno_dias || "";
   $("#palavras-destaque").value = state.settings.palavras_destaque || "";
+  $("#etiquetas-lista").value = state.settings.etiquetas_lista || "";
 }
 function renderAccounts() {
   $("#acc-list").innerHTML = state.accounts.map(a => `<div class="card"><b>${esc(a.email)}</b>
@@ -1418,6 +1410,10 @@ function bind() {
     await refreshStatus(); await loadThreads();
   });
   $("#ia-ler-imagens").onchange = guard(async (e) => { state.settings = await api("/api/settings", {body: {ia_ler_imagens_auto: e.target.checked}}); });
+  $("#etiquetas-lista").onchange = guard(async (e) => {
+    state.settings = await api("/api/settings", {body: {etiquetas_lista: e.target.value}});
+    toast(e.target.value.trim() ? "A lista mostra só as etiquetas desses responsáveis." : "A lista mostra todas as etiquetas."); renderThreads();
+  });
   $("#palavras-destaque").onchange = guard(async (e) => {
     state.settings = await api("/api/settings", {body: {palavras_destaque: e.target.value}});
     toast("Palavras em destaque atualizadas."); await loadThreads();
